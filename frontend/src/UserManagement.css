@@ -1,0 +1,60 @@
+.user-admin-section {
+    margin-top: 2rem;
+    text-align: left;
+}
+
+.user-admin-section summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.user-admin-list {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+}
+
+.user-admin-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.user-admin-tag {
+    margin-left: 0.4rem;
+    opacity: 0.7;
+    font-size: 0.85em;
+}
+
+.user-admin-tag--admin {
+    padding: 0.05rem 0.5rem;
+    border: 1px solid cyan;
+    border-radius: 999px;
+    opacity: 1;
+}
+
+.user-admin-form {
+    margin-top: 1.5rem;
+}
+
+.user-admin-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.75rem 0;
+}
+
+.user-admin-notice {
+    margin-top: 0.75rem;
+}
+
+.user-admin-notice--ok {
+    color: #4caf50;
+}
+
+.user-admin-notice--error {
+    color: #ff6b6b;
+}

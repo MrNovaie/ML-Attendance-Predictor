@@ -1,0 +1,107 @@
+.attendance-section {
+    margin-top: 2rem;
+    text-align: left;
+}
+
+.attendance-section summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.attendance-date {
+    margin: 1rem 0;
+}
+
+.attendance-list {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+}
+
+.attendance-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.attendance-options {
+    display: flex;
+    gap: 0.25rem;
+}
+
+/* The radio sits invisibly over the label so the whole pill is clickable and still keyboard-focusable. */
+.attendance-option {
+    position: relative;
+    padding: 0.35rem 0.8rem;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.attendance-option input {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.attendance-option:hover {
+    transition: all 0.1s ease-in-out;
+    background: rgba(0, 255, 255, 0.10);
+    transform: scale(1.02);
+}
+.attendance-option.option-in.is-selected {
+    transition: all 0.1s ease-in-out;
+    border-color: rgb(0, 142, 43);
+    background: rgba(0, 255, 255, 0.15);
+    font-weight: 600;
+}
+.attendance-option.option-out.is-selected {
+    transition: all 0.1s ease-in-out;
+    background-color: rgb(220, 53, 69, 0.15);
+    border-color: rgb(220, 53, 69);
+    font-weight: 600;
+}
+.attendance-option.option-partial-day.is-selected {
+    transition: all 0.1s ease-in-out;
+    background-color: rgba(255, 242, 0, 0.15);
+    border-color: rgba(248, 219, 33, 0.674);
+    font-weight: 600;
+}
+.attendance-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.attendance-notice {
+    margin-top: 0.75rem;
+}
+
+.attendance-notice--ok {
+    color: #4caf50;
+}
+
+.attendance-notice--error {
+    color: #ff6b6b;
+}
+
+.attendance-add-person {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.attendance-add-person-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}

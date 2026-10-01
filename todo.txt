@@ -1,0 +1,28 @@
+1. Daily "who's in" page
+
+A read-only page you switch to with a button fixed at the bottom left. It has:
+
+A calendar date picker that defaults to today, or the latest weekday if today is a weekend.
+The same weekend message as the rest of the app, such as "Sat 3 Oct is a Saturday. No attendance on weekends."
+The people grouped as In, Out, Partial day, and Not recorded.
+
+How it fits in: it needs no backend changes. It can use GET /api/attendance?date= and /api/people, and in the frontend a view state in App.jsx switches between the two pages without a router. If you made GET /api/attendance admin-only, non-admins won't see it, so decide whether everyone should.
+
+One decision for you: on a future date, should it say "nothing recorded yet", or show predictions? I'd start with "nothing recorded yet" and keep it simple.
+
+2. Soon
+Close open registration, now that admins can create accounts.
+Build the DB → CSV export, which is your only backup.
+Make the predictions list refresh after you save attendance.
+Add a way to remove or rename a person. You can add them now but can't delete them, and deleting needs a decision about their attendance rows.
+Update the README for the new database path, endpoints, first-use step, and limitations.
+
+3. Later
+Flask-Migrate, so schema changes stop needing manual SQL.
+Tests for the endpoints.
+Read the CORS origin from an environment variable, and tie debug=True to ENV.
+Make response shapes consistent, since some include code and others don't.
+Split create_app into blueprints.
+Fix the login timing leak.
+Write the model cache atomically (only matters with several workers).
+Force a retrain after deletions (only matters once you add delete features).
