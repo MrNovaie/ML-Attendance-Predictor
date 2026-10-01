@@ -69,7 +69,6 @@
     font-weight: 600;
 }
 .attendance-option.option-partial-day.is-selected {
-    transition: all 0.1s ease-in-out;
     background-color: rgba(255, 242, 0, 0.15);
     border-color: rgba(248, 219, 33, 0.674);
     font-weight: 600;
