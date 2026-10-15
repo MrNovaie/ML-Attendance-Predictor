@@ -1,10 +1,17 @@
 from flask_login import UserMixin
 from extensions import db
 
+# Departments a person can belong to. This is a sample list: edit it here and the
+# form dropdown and the server-side check both follow. People without a department
+# are placed in DEFAULT_DEPARTMENT, which is always an allowed choice as well.
+DEFAULT_DEPARTMENT = "Holding"
+DEPARTMENTS = ["Intelligence", "Finance", "Human Resources", "Manpower", "Headquarters"]
+
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
+    person_id = db.Column(db.Integer, db.ForeignKey('person.id'), unique=True, nullable=True)
     # 255 chars to fit werkzeug.generate_password_hash output (pbkdf2/scrypt
     # produces ~150-200+ char strings; 80 truncates and breaks login).
     password = db.Column(db.String(255), nullable=False)
@@ -17,6 +24,12 @@ class Person(db.Model):
     __tablename__ = 'person'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), unique=True, nullable=False)
+    department = db.Column(
+        db.String(80),
+        nullable=False,
+        default=DEFAULT_DEPARTMENT,
+        server_default=DEFAULT_DEPARTMENT,
+    )
     attendance_records = db.relationship('AttendanceRecord', backref='person', lazy=True)
 
 class AttendanceRecord(db.Model):

@@ -1,7 +1,8 @@
 import logging
 import os
 import click
-from datetime import date
+import math
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -9,21 +10,62 @@ from flask_login import login_user, login_required, logout_user, current_user
 from functools import wraps
 from extensions import db, login_manager
 from import_csv import import_csv
-from ml import input_to_date, get_name_list, load_data, predict_all_for_date, evaluate_all
-# Importing users registers User on db's metadata so db.create_all() picks
-# it up. Don't drop this import even though `User` is the only name we use.
+from ml import input_to_date, get_name_list, load_data, predict_all_for_date, evaluate_all, invalidate_models
 
 from pathlib import Path
 from sqlalchemy.exc import IntegrityError
-from users import User, Person, AttendanceRecord
+# Importing users registers User on db's metadata so db.create_all() picks
+# it up. Don't drop this import even though `User` is the only name we use.
+from users import User, Person, AttendanceRecord, DEFAULT_DEPARTMENT, DEPARTMENTS
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 
+# Variables HERE or in .env are read at app boot time. Changing them later has no effect.
+# The office runs on UTC+8. "Today" and the self-service cutoff are judged in this timezone and not
+# in the server's, so they stay right when the server clock is UTC.
+TIMEZONE_OFFSET_HOURS = 8
+TIMEZONE_LABEL = f"UTC{TIMEZONE_OFFSET_HOURS:+d}"
+LOCAL_TZ = timezone(timedelta(hours=TIMEZONE_OFFSET_HOURS))
+# Logged-in users may change their OWN attendance for today until this local time (HH:MM, 24h).
+SELF_SERVICE_CUTOFF = "08:15"
+_CUTOFF_HOUR, _CUTOFF_MINUTE = (int(part) for part in SELF_SERVICE_CUTOFF.split(":"))
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def now_local() -> datetime:
+    return utc_now().astimezone(LOCAL_TZ)
+
+
+def local_today() -> date:
+    return now_local().date()
+
+
+def self_service_window(now: datetime) -> tuple[bool, int]:
+    """(is_open, seconds_left) for users editing their own attendance at local time `now`.
+
+    Open on weekdays until the cutoff. It resets by itself each day because it only ever
+    looks at the current local date and time.
+    """
+    if now.weekday() > 4:
+        return False, 0
+    cutoff = now.replace(hour=_CUTOFF_HOUR, minute=_CUTOFF_MINUTE, second=0, microsecond=0)
+    if now >= cutoff:
+        return False, 0
+    return True, math.ceil((cutoff - now).total_seconds())
+
+
+def department_of(person) -> str:
+    return (person.department or "").strip() or DEFAULT_DEPARTMENT
+
+
 def ensure_attendance_schema() -> None:
-    """Recreate person/attendance_record if the DB predates the ORM long-format schema.
+    """Recreate person/attendance_record if the DB predates the schema.
 
     db.create_all() never alters existing tables. An older attendance_record table
     (e.g. from pandas to_sql or a previous model) may exist without person_id.
@@ -44,6 +86,55 @@ def ensure_attendance_schema() -> None:
     AttendanceRecord.__table__.drop(db.engine, checkfirst=True)
     Person.__table__.drop(db.engine, checkfirst=True)
     db.create_all()
+
+
+def ensure_person_department() -> None:
+    """Make sure person.department exists and nobody is left without one.
+
+    db.create_all() never alters existing tables. A missing column is added as NOT NULL
+    with the default department, and blank or NULL values left by an older column are
+    filled with that default. Existing rows are kept.
+
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(db.engine)
+    if not inspector.has_table("person"):
+        return
+    has_column = "department" in {c["name"] for c in inspector.get_columns("person")}
+    default_literal = DEFAULT_DEPARTMENT.replace("'", "''")
+    with db.engine.begin() as conn:
+        if not has_column:
+            logger.warning("person.department is missing. Adding the column.")
+            conn.execute(text(
+                f"ALTER TABLE person ADD COLUMN department VARCHAR(80) NOT NULL DEFAULT '{default_literal}'"
+            ))
+        conn.execute(
+            text("UPDATE person SET department = :d WHERE department IS NULL OR TRIM(department) = ''"),
+            {"d": DEFAULT_DEPARTMENT},
+        )
+
+
+def ensure_user_person_link() -> None:
+    """Add user.person_id (which person a login belongs to) to a database created before it existed.
+
+    db.create_all() never alters existing tables. The column is nullable, so existing logins stay
+    unlinked until an admin links them. SQLite cannot add a UNIQUE column in place, so the
+    one-login-per-person rule is added as a unique index.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(db.engine)
+    table = User.__table__.name
+    if not inspector.has_table(table):
+        return
+    if "person_id" in {c["name"] for c in inspector.get_columns(table)}:
+        return
+    logger.warning("%s.person_id is missing. Adding the column.", table)
+    quoted = db.engine.dialect.identifier_preparer.quote(table)
+    with db.engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE {quoted} ADD COLUMN person_id INTEGER REFERENCES person (id)"))
+        conn.execute(text(f"CREATE UNIQUE INDEX uq_user_person_id ON {quoted} (person_id)"))
 
 
 def _resolve_secret_key() -> str:
@@ -69,6 +160,18 @@ def admin_required(fn):
             return jsonify(code=403, error="Admin privileges required"), 403
         return fn(*args, **kwargs)
     return wrapper
+
+def clean_department(value):
+    """Return (department, error). Blank or missing means the default department."""
+    if value is None:
+        return DEFAULT_DEPARTMENT, None
+    if not isinstance(value, str):
+        return None, "Department must be text."
+    value = value.strip() or DEFAULT_DEPARTMENT
+    allowed = [DEFAULT_DEPARTMENT, *DEPARTMENTS]
+    if value not in allowed:
+        return None, f"Department must be one of: {', '.join(allowed)}."
+    return value, None
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -96,6 +199,7 @@ def create_app() -> Flask:
     @login_manager.unauthorized_handler
     def unauthorized():
         return jsonify(code=401, error="Unauthorized. Please login to continue."), 401
+    '''Endpoint Section'''
     @app.get("/api/predict")
     @login_required
     def predict():
@@ -127,7 +231,18 @@ def create_app() -> Flask:
     @login_required
     def people():
         rows = Person.query.order_by(Person.id).all()
-        return jsonify([{"id": p.id, "name": p.name} for p in rows])
+        result = [{"id": p.id, "name": p.name, "department": department_of(p)} for p in rows]
+        if current_user.is_admin:
+            # Which login is linked to whom is admin business; other users never see it.
+            logins = {u.person_id: u.id for u in User.query.filter(User.person_id.isnot(None))}
+            for entry in result:
+                entry["user_id"] = logins.get(entry["id"])
+        return jsonify(result)
+
+    @app.get("/api/departments")
+    @login_required
+    def departments():
+        return jsonify(departments=[DEFAULT_DEPARTMENT, *DEPARTMENTS], default=DEFAULT_DEPARTMENT)
 
     @app.route("/api/login", methods=["POST"])
     def login():
@@ -219,7 +334,7 @@ def create_app() -> Flask:
     def list_users():
         rows = User.query.order_by(User.username).all()
         return jsonify([
-            {"id": u.id, "username": u.username, "is_admin": bool(u.is_admin)}
+            {"id": u.id, "username": u.username, "is_admin": bool(u.is_admin), "person_id": u.person_id}
             for u in rows
         ])
     
@@ -288,7 +403,10 @@ def create_app() -> Flask:
             return jsonify(error="Name is required"), 400
         if Person.query.filter_by(name=name).first():
             return jsonify(error="Person already exists"), 409
-        person = Person(name=name)
+        department, error = clean_department(body.get("department"))
+        if error:
+            return jsonify(error=error), 400
+        person = Person(name=name, department=department)
         try:
             db.session.add(person)
             db.session.commit()
@@ -299,25 +417,75 @@ def create_app() -> Flask:
             db.session.rollback()
             logger.exception("Failed to create person: %s", name)
             return jsonify(error="Internal server error"), 500
-        return jsonify(id=person.id, name=person.name), 201
+        return jsonify(id=person.id, name=person.name, department=person.department), 201
+
+    @app.patch("/api/people/<int:person_id>")
+    @login_required
+    @admin_required
+    def update_person(person_id: int):
+        person = db.session.get(Person, person_id)
+        if person is None:
+            return jsonify(error="Person not found"), 404
+        body = request.get_json(silent=True) or {}
+        if "department" not in body and "user_id" not in body:
+            return jsonify(error="Nothing to update."), 400
+
+        if "department" in body:
+            department, error = clean_department(body["department"])
+            if error:
+                return jsonify(error=error), 400
+
+        new_login = None
+        if "user_id" in body:
+            user_id = body["user_id"]
+            if user_id is not None:
+                # type() so that true/false are not accepted as 1/0
+                if type(user_id) is not int:
+                    return jsonify(error="user_id must be an integer or null."), 400
+                new_login = db.session.get(User, user_id)
+                if new_login is None:
+                    return jsonify(error="User not found"), 404
+
+        try:
+            if "department" in body:
+                person.department = department
+            if "user_id" in body:
+                # One login per person: whoever was linked before is unlinked first.
+                for old in User.query.filter(User.person_id == person.id):
+                    if new_login is None or old.id != new_login.id:
+                        old.person_id = None
+                db.session.flush()
+                if new_login is not None:
+                    new_login.person_id = person.id  # moves them off any other person
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception("Failed to update person id=%s", person_id)
+            return jsonify(error="Internal server error"), 500
+        linked = User.query.filter_by(person_id=person.id).first()
+        return jsonify(id=person.id, name=person.name, department=person.department,
+                       user_id=linked.id if linked else None)
 
     '''Updating or changing attendance'''
     ALLOWED_STATUSES = {0, 1, 2}
-    
+
+    def valid_status(value) -> bool:
+        # type() rather than isinstance(): True/False are ints in Python and must not count as 1/0.
+        return type(value) is int and value in ALLOWED_STATUSES
+
     @app.put("/api/attendance")
     @login_required
+    @admin_required
     def record_attendance():
         body = request.get_json(silent=True) or {}
         try:
             day = input_to_date(body.get("date"))
-            if day > date.today():
-                return jsonify(error="Cannot record attendance for a future date."), 400
-            if day.weekday() > 4:
-                return jsonify(error="Attendance can only be recorded for weekdays."), 400
         except ValueError:
             return jsonify(error="Bad date format. Use YYYY-MM-DD."), 400
-        if day > date.today():
+        if day > local_today():
             return jsonify(error="Cannot record attendance for a future date."), 400
+        if day.weekday() > 4:
+            return jsonify(error="Attendance can only be recorded for weekdays."), 400
 
         entries = body.get("records")
         if not isinstance(entries, list) or not entries:
@@ -330,35 +498,54 @@ def create_app() -> Flask:
             return jsonify(error="Each record needs an integer person_id."), 400
         if len(ids) != len(entries):
             return jsonify(error="Duplicate person_id in records."), 400
-        if any(e.get("status") not in ALLOWED_STATUSES for e in entries):
-            return jsonify(error=f"status must be one of {sorted(ALLOWED_STATUSES)}"), 400
+        # "status": null removes the person's record for that day (back to "Not recorded").
+        # The key must be present, so a record with no status can never delete by accident.
+        if any("status" not in e for e in entries):
+            return jsonify(error="Each record needs a status (0, 1, 2, or null to remove)."), 400
+        if any(e["status"] is not None and not valid_status(e["status"]) for e in entries):
+            return jsonify(error=f"status must be one of {sorted(ALLOWED_STATUSES)}, or null to remove."), 400
 
         known = {p.id for p in Person.query.filter(Person.id.in_(ids))}
         if ids - known:
             return jsonify(error=f"Unknown person_id(s): {sorted(ids - known)}"), 400
 
         existing = {r.person_id: r for r in AttendanceRecord.query.filter_by(date=day)}
+        saved = removed = 0
         try:
             for e in entries:
                 pid = int(e["person_id"])
-                if pid in existing:
+                if e["status"] is None:
+                    if pid in existing:
+                        db.session.delete(existing[pid])
+                        removed += 1
+                elif pid in existing:
                     existing[pid].status = e["status"]
+                    saved += 1
                 else:
                     db.session.add(AttendanceRecord(
                         person_id=pid, date=day,
                         day_of_week=day.isoweekday(), status=e["status"],
                     ))
+                    saved += 1
             db.session.commit()
         except Exception:
             db.session.rollback()
             logger.exception("Failed to save attendance for %s", day)
             return jsonify(error="Internal server error"), 500
 
-        return jsonify(status="success", date=day.isoformat(), saved=len(entries))
+        if removed:
+            # Deleting a row does not touch updated_at, so the model cache would never notice.
+            try:
+                invalidate_models()
+            except OSError:
+                logger.exception("Records were removed but the model cache could not be cleared")
+
+        return jsonify(status="success", date=day.isoformat(), saved=saved, removed=removed)
 
 
     @app.get("/api/attendance")
     @login_required
+    @admin_required
     def get_attendance():
         try:
             day = input_to_date(request.args.get("date"))
@@ -367,6 +554,108 @@ def create_app() -> Flask:
         rows = AttendanceRecord.query.filter_by(date=day).all()
         return jsonify(date=day.isoformat(),
                     records=[{"person_id": r.person_id, "status": r.status} for r in rows])
+
+    '''Today, self-service and tally'''
+    @app.get("/api/today")
+    @login_required
+    def today_info():
+        now = now_local()
+        return jsonify(date=now.date().isoformat(), weekend=now.weekday() > 4, timezone=TIMEZONE_LABEL)
+
+    def linked_person():
+        return db.session.get(Person, current_user.person_id) if current_user.person_id else None
+
+    @app.get("/api/me/attendance")
+    @login_required
+    def my_attendance():
+        now = now_local()
+        day = now.date()
+        person = linked_person()
+        status = None
+        if person is not None:
+            record = AttendanceRecord.query.filter_by(person_id=person.id, date=day).first()
+            status = record.status if record else None
+        window_open, seconds_left = self_service_window(now)
+        return jsonify(
+            date=day.isoformat(),
+            weekend=now.weekday() > 4,
+            timezone=TIMEZONE_LABEL,
+            cutoff=SELF_SERVICE_CUTOFF,
+            window_open=window_open,
+            seconds_left=seconds_left,
+            linked=person is not None,
+            person=None if person is None else {"id": person.id, "name": person.name,
+                                                "department": department_of(person)},
+            status=status,
+            can_edit=person is not None and window_open,
+        )
+
+    @app.put("/api/me/attendance")
+    @login_required
+    def update_my_attendance():
+        """A user sets their OWN status for today, until the cutoff. The person comes from the
+        account's admin-made link, never from the request, so nobody can edit someone else."""
+        body = request.get_json(silent=True) or {}
+        status = body.get("status")
+        if not valid_status(status):
+            return jsonify(error=f"status must be one of {sorted(ALLOWED_STATUSES)}"), 400
+        person = linked_person()
+        if person is None:
+            return jsonify(error="Your account isn't linked to a person yet. Ask an admin to link it."), 403
+        now = now_local()
+        if now.weekday() > 4:
+            return jsonify(error="Attendance can only be recorded for weekdays."), 400
+        window_open, _ = self_service_window(now)
+        if not window_open:
+            return jsonify(error=f"Changes closed at {SELF_SERVICE_CUTOFF} ({TIMEZONE_LABEL}). "
+                                 "Ask an admin to update your attendance."), 403
+        day = now.date()
+        try:
+            record = AttendanceRecord.query.filter_by(person_id=person.id, date=day).first()
+            if record is None:
+                db.session.add(AttendanceRecord(person_id=person.id, date=day,
+                                                day_of_week=day.isoweekday(), status=status))
+            else:
+                record.status = status
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(error="Your attendance was changed at the same moment. Please try again."), 409
+        except Exception:
+            db.session.rollback()
+            logger.exception("Failed to save self-service attendance for person id=%s", person.id)
+            return jsonify(error="Internal server error"), 500
+        return jsonify(status="success", date=day.isoformat(), attendance=status)
+
+    @app.get("/api/attendance/summary")
+    @login_required
+    def attendance_summary():
+        """Head-counts for today with no names, so any logged-in user can sanity-check the numbers."""
+        department = (request.args.get("department") or "").strip()
+        if len(department) > Person.department.type.length:
+            return jsonify(error="Unknown department."), 400
+        day = local_today()
+        people_query = Person.query
+        records_query = (
+            db.session.query(AttendanceRecord.status, db.func.count())
+            .join(Person, Person.id == AttendanceRecord.person_id)
+            .filter(AttendanceRecord.date == day)
+        )
+        if department:
+            people_query = people_query.filter(Person.department == department)
+            records_query = records_query.filter(Person.department == department)
+        total = people_query.count()
+        by_status = {status: 0 for status in sorted(ALLOWED_STATUSES)}
+        for status, count in records_query.group_by(AttendanceRecord.status):
+            by_status[status] = count
+        return jsonify(
+            date=day.isoformat(),
+            department=department or None,
+            by_status={str(status): count for status, count in by_status.items()},
+            not_recorded=total - sum(by_status.values()),
+            total=total,
+        )
+
     return app
 
     
@@ -379,5 +668,7 @@ if __name__ == "__main__":
     with app.app_context():
         db.create_all()
         ensure_attendance_schema()
+        ensure_person_department()
+        ensure_user_person_link()
         import_csv()
     app.run(debug=True, port=5000)

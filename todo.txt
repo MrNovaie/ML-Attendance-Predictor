@@ -1,28 +1,45 @@
-1. Daily "who's in" page
+DONE
 
-A read-only page you switch to with a button fixed at the bottom left. It has:
+v0.3
+- Today's Attendance page, switched with a button fixed at the bottom left (view state in App.jsx, no router).
+  It always shows today (no date picker, so the "future date" question no longer applies), has a department dropdown,
+  In / Partial Day / Out columns, a Not recorded tray and a blue Save button (mouse, touch, keyboard).
+- Departments: dropdown (Intelligence, Finance, Human Resources, Manpower, Headquarters), blank = Holding, NOT NULL.
+- Predictions list refreshes after attendance is saved.
 
-A calendar date picker that defaults to today, or the latest weekday if today is a weekend.
-The same weekend message as the rest of the app, such as "Sat 3 Oct is a Saturday. No attendance on weekends."
-The people grouped as In, Out, Partial day, and Not recorded.
+v0.4
+- Un-record attendance (drag back to Not recorded + Save), with a forced model retrain after deletions.
+- Self-service: a logged-in user can change their own attendance until 08:15 UTC+8, resets every day, enforced by the server.
+- Login <-> person link, set by admins under Record attendance > Departments and logins.
+- Tally at the bottom right ("In 3 · Partial 1 · Out 2 · Not recorded 1", then "(of 7)"), for admins and for users (counts only).
+- "Today" is now judged in UTC+8, not the server's timezone. GET and PUT /api/attendance are admin-only.
+- README updated to v0.4.
 
-How it fits in: it needs no backend changes. It can use GET /api/attendance?date= and /api/people, and in the frontend a view state in App.jsx switches between the two pages without a router. If you made GET /api/attendance admin-only, non-admins won't see it, so decide whether everyone should.
 
-One decision for you: on a future date, should it say "nothing recorded yet", or show predictions? I'd start with "nothing recorded yet" and keep it simple.
+1. Next (v0.5)
+Split Partial Day into AM and PM. Start at STATUSES (attendanceUtils.js) and ALLOWED_STATUSES (app.py). The status CHECK constraint in users.py (0, 1, 2) means a table rebuild, and the ML status mapping and the CSV import need updating too.
+Decide who can see Predictions. /api/predict, /api/evaluate and /api/people are open to every login, so users can see everyone's name and predicted status while the tally is deliberately names-free. Options: admin-only, or each user sees only their own.
+Close open registration, now that admins can create accounts. (hopefully make admin account creation 2FA process)
+   If registration stays for a while: an optional department request (default Holding) that an admin confirms. Do not create a person at sign-up.
+Build the DB → CSV export, which is your only backup. Un-recording is a permanent delete, so ideally offer a backup or export before it.
+Add a way to remove or rename a person. You can add them now but can't delete them, and deleting needs a decision about their attendance rows (and about the login linked to them).
 
-2. Soon
-Close open registration, now that admins can create accounts.
-Build the DB → CSV export, which is your only backup.
-Make the predictions list refresh after you save attendance.
-Add a way to remove or rename a person. You can add them now but can't delete them, and deleting needs a decision about their attendance rows.
-Update the README for the new database path, endpoints, first-use step, and limitations.
 
-3. Later
-Flask-Migrate, so schema changes stop needing manual SQL.
-Tests for the endpoints.
+2. Later
+Flask-Migrate, so schema changes stop needing manual SQL (person.department and user.person_id are only added by small startup ALTERs).
+Tests for the endpoints. The manual smoke test in the README is the starting point (links, self-service cutoff, un-record + retrain, permissions).
 Read the CORS origin from an environment variable, and tie debug=True to ENV.
 Make response shapes consistent, since some include code and others don't.
 Split create_app into blueprints.
 Fix the login timing leak.
 Write the model cache atomically (only matters with several workers).
-Force a retrain after deletions (only matters once you add delete features).
+Make /api/predict use the UTC+8 date instead of the server's date.
+Hide or warn about head-counts for departments of one or two people (they identify the person).
+requirements.txt / lockfile for the Python dependencies.
+Optional Vite proxy so the API and UI share one origin in dev.
+
+
+3. Housekeeping
+Rename frontend/src/AttendanceUtils.js to attendanceUtils.js (the imports use the lowercase name; case matters on Linux, macOS and CI).
+Delete the untracked package.json and package-lock.json at the repo root if they only contain @dnd-kit/core. The real ones are in frontend/.
+Create backend/admin.py only if admin routes are split out of app.py; otherwise drop it from the README layout.

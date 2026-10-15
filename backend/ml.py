@@ -7,6 +7,7 @@ Public API (what the rest of your app should use):
     evaluate(person) -> dict                 # accuracy + baseline for one person
     train_all_models(data, name_list)        # (re)train and save the models dict
     load_models()                            # load cached models (or train + cache)
+    invalidate_models()                      # drop the cache; call after DELETING attendance rows
     get_name_list(data)                      # derive name list from data columns
 
 """
@@ -95,6 +96,9 @@ def train_all_models(
 def load_models() -> dict[str, CategoricalNB]:
     """Return per-person models, retraining when DB is newer than the cache.
 
+    "Newer" means a row was added or changed (max updated_at). A deleted row changes neither
+    that nor the cache's mtime, so deleting code must call invalidate_models().
+
     Returns {} when there is no training data yet — callers fall through the
     "no model for X" branch in predict_for_one().
     """
@@ -103,12 +107,25 @@ def load_models() -> dict[str, CategoricalNB]:
         return {}
 
     latest_ts = latest.replace(tzinfo=timezone.utc).timestamp()
-    cache_fresh = MODELS_PATH.exists() and MODELS_PATH.stat().st_mtime > latest_ts + 1
-    if cache_fresh:
-        return joblib.load(MODELS_PATH)
+    try:
+        cache_fresh = MODELS_PATH.stat().st_mtime > latest_ts + 1
+        if cache_fresh:
+            return joblib.load(MODELS_PATH)
+    except FileNotFoundError:
+        pass  # no cache yet, or invalidate_models() just removed it: retrain below
 
     data = load_data()
     return train_all_models(data, get_name_list(data))
+
+
+def invalidate_models() -> None:
+    """Throw away the cached models so the next load_models() retrains from the current rows.
+
+    Needed after deleting attendance records: load_models() only compares max(updated_at)
+    with the cache file's mtime, and removing a row changes neither, so a stale model would
+    keep being served. Retraining happens lazily on the next prediction, not here.
+    """
+    MODELS_PATH.unlink(missing_ok=True)
 
 def input_to_date(raw: str) -> datetime.date:
     if not raw:
@@ -235,6 +252,3 @@ def evaluate_all() -> dict:
         "total_samples": int(len(data)),
         "n_samples": holdout_rows,
     }
-
-
-
