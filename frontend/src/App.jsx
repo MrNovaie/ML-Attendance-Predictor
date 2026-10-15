@@ -4,6 +4,7 @@ import './AttendanceForm'
 import './UserManagement'
 import AttendanceForm from './AttendanceForm'
 import UserManagement from './UserManagement'
+import DailyAttendance from './DailyAttendance'
 
 const SERVER_URL = 'http://localhost:5000'
 
@@ -21,6 +22,8 @@ function App() {
     const [authChecking, setAuthChecking] = useState(true)
     const [authView, setAuthView] = useState('login')
     const [authNotice, setAuthNotice] = useState('')
+    const [view, setView] = useState('predictions') // 'predictions' | 'attendance'
+    const [predictionsVersion, setPredictionsVersion] = useState(0) // bumped after attendance is saved
 
     const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     const dayName = date ? daysOfWeek[new Date(date).getDay()] : ''
@@ -66,7 +69,7 @@ function App() {
                 setPredictions([])
                 setMessage('Could not reach the server.')
             })
-    }, [user, date])
+    }, [user, date, predictionsVersion])
 
     async function runEvaluation() {
         setEvalLoading(true)
@@ -130,89 +133,107 @@ function App() {
         <div className="app-container">
             <div className="auth-bar">
                 <span>Welcome back, <strong style={{ color: 'cyan', fontFamily: 'cursive'}}>{user}</strong></span>
-                <LogoutButton onLogout={() => {setUser(null); setIsAdmin(false)} } />
+                <LogoutButton onLogout={() => {setUser(null); setIsAdmin(false); setView('predictions')} } />
             </div>
-            <h1 className="title">Attendance Predictor</h1>
-            <label htmlFor="date-input" className="date-input">Select a date: </label>
-            <input
-                id="date-input"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-            />
-            <p className="message">{message}</p>
-            <ul className="predictions-list">
-                {predictions.map((prediction, index) => (
-                    <li key={index} className ="prediction-item">
-                        {prediction.person}: <span className={`badge badge-${prediction.verdict.toLowerCase().replaceAll(' ', '-')}`}> {prediction.verdict} </span> 
-                        <span className="bar-text">Confidence Score</span>
-                        <div className="bar-bg">
-                            <div className="bar-fill" style={{ width: `${prediction.p_winner}%` }} />
-                        </div>
-                        <small>
-                            based on <strong>{prediction.sample_size}</strong> past {dayName}s
-                        </small>
-                    </li>
-                ))}
-            </ul>
-            <div className="evaluate-section">
-                <button
-                    type="button"
-                    className="evaluate-btn"
-                    onClick={runEvaluation}
-                    disabled={evalLoading}
-                    aria-busy={evalLoading}
-                >
-                    {evalLoading ? 'Evaluating…' : 'Check model accuracy (using historical data)'}
-                </button>
-                {evalError && (
-                    <p className="eval-message eval-message--error" role="alert">{evalError}</p>
-                )}
-                {evalResult?.evaluations?.length > 0 && (
-                    <details open className="eval-details">
-                        <summary>Model accuracy (holdout test)</summary>
-                        <ul className="eval-list">
-                            {evalResult.evaluations.map((row) => (
-                                <li key={row.person} className="eval-item">
-                                    <strong>{row.person}</strong>: <span className="badge badge-eval">{row.accuracy_pct}% accuracy</span>{' '}
-                                    (n={row.n_samples})
-                                    <br />
-                                    (baseline: {row.baseline_pct}%, n={row.total_samples})
-                                </li>
-                            ))}
-                        </ul>
-                        <div className="eval-qa-container">
-                            <h3>QnA</h3>
-                            <p><strong>What is the confidence score?</strong></p>
-                            <small>
-                                A: The confidence score is the model&apos;s estimated probability for the
-                                predicted outcome (e.g. In) to happen on this day (e.g. {dayName}). The higher the number, the more sure the model is.
-                            </small>
-                            <p><strong>What is the holdout set?</strong></p>
-                            <small>
-                                A: The holdout set is a random 20% of the data set aside before training.
-                                The model never sees these rows while learning, so they give an unbiased
-                                check of how well it predicts new data. With only {evalResult.total_samples}{' '}
-                                rows, the holdout is just ~{evalResult.n_samples} rows per person, which
-                                means the accuracy number bounces around a lot.
-                            </small>
-                            <p><strong>What is the accuracy score?</strong></p>
-                            <small>
-                                A: The accuracy score is the percentage of holdout-set days the model
-                                predicted correctly. A useful model should beat the baseline below.
-                            </small>
-                            <p><strong>What is the baseline?</strong></p>
-                            <small>
-                                A: The baseline is the percentage of past days (all days, not just {dayName}s)
-                                that the model would have predicted correctly if it had just guessed the most
-                                frequent class (the mode).
-                            </small>
-                        </div>
-                    </details>
-                )}
-            </div>
-            {isAdmin && <AttendanceForm serverUrl={SERVER_URL} />}
-            {isAdmin && <UserManagement serverUrl={SERVER_URL} currentUsername={user} />}
+            {view === 'attendance' ? (
+                <DailyAttendance
+                    serverUrl={SERVER_URL}
+                    isAdmin={isAdmin}
+                    onSaved={() => setPredictionsVersion((v) => v + 1)}
+                />
+            ) : (
+                <>
+                    <h1 className="title">Attendance Predictor</h1>
+                    <label htmlFor="date-input" className="date-input">Select a date: </label>
+                    <input
+                        id="date-input"
+                        type="date"
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                    />
+                    <p className="message">{message}</p>
+                    <ul className="predictions-list">
+                        {predictions.map((prediction, index) => (
+                            <li key={index} className ="prediction-item">
+                                {prediction.person}: <span className={`badge badge-${prediction.verdict.toLowerCase().replaceAll(' ', '-')}`}> {prediction.verdict} </span> 
+                                <span className="bar-text">Confidence Score</span>
+                                <div className="bar-bg">
+                                    <div className="bar-fill" style={{ width: `${prediction.p_winner}%` }} />
+                                </div>
+                                <small>
+                                    based on <strong>{prediction.sample_size}</strong> past {dayName}s
+                                </small>
+                            </li>
+                        ))}
+                    </ul>
+                    <div className="evaluate-section">
+                        <button
+                            type="button"
+                            className="evaluate-btn"
+                            onClick={runEvaluation}
+                            disabled={evalLoading}
+                            aria-busy={evalLoading}
+                        >
+                            {evalLoading ? 'Evaluating…' : 'Check model accuracy (using historical data)'}
+                        </button>
+                        {evalError && (
+                            <p className="eval-message eval-message--error" role="alert">{evalError}</p>
+                        )}
+                        {evalResult?.evaluations?.length > 0 && (
+                            <details open className="eval-details">
+                                <summary>Model accuracy (holdout test)</summary>
+                                <ul className="eval-list">
+                                    {evalResult.evaluations.map((row) => (
+                                        <li key={row.person} className="eval-item">
+                                            <strong>{row.person}</strong>: <span className="badge badge-eval">{row.accuracy_pct}% accuracy</span>{' '}
+                                            (n={row.n_samples})
+                                            <br />
+                                            (baseline: {row.baseline_pct}%, n={row.total_samples})
+                                        </li>
+                                    ))}
+                                </ul>
+                                <div className="eval-qa-container">
+                                    <h3>QnA</h3>
+                                    <p><strong>What is the confidence score?</strong></p>
+                                    <small>
+                                        A: The confidence score is the model&apos;s estimated probability for the
+                                        predicted outcome (e.g. In) to happen on this day (e.g. {dayName}). The higher the number, the more sure the model is.
+                                    </small>
+                                    <p><strong>What is the holdout set?</strong></p>
+                                    <small>
+                                        A: The holdout set is a random 20% of the data set aside before training.
+                                        The model never sees these rows while learning, so they give an unbiased
+                                        check of how well it predicts new data. With only {evalResult.total_samples}{' '}
+                                        rows, the holdout is just ~{evalResult.n_samples} rows per person, which
+                                        means the accuracy number bounces around a lot.
+                                    </small>
+                                    <p><strong>What is the accuracy score?</strong></p>
+                                    <small>
+                                        A: The accuracy score is the percentage of holdout-set days the model
+                                        predicted correctly. A useful model should beat the baseline below.
+                                    </small>
+                                    <p><strong>What is the baseline?</strong></p>
+                                    <small>
+                                        A: The baseline is the percentage of past days (all days, not just {dayName}s)
+                                        that the model would have predicted correctly if it had just guessed the most
+                                        frequent class (the mode).
+                                    </small>
+                                </div>
+                            </details>
+                        )}
+                    </div>
+                    {isAdmin && <AttendanceForm serverUrl={SERVER_URL} />}
+                    {isAdmin && <UserManagement serverUrl={SERVER_URL} currentUsername={user} />}
+                </>
+            )}
+            <button
+                type="button"
+                className="view-toggle"
+                onClick={() => setView(view === 'attendance' ? 'predictions' : 'attendance')}
+            >
+                {view === 'attendance' ? 'Predictions' : "Today's Attendance"}
+            </button>
+            <div className="view-toggle-spacer" aria-hidden="true" />
         </div>
     )
 }

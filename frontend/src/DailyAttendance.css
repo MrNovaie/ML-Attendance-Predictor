@@ -1,0 +1,392 @@
+.daily {
+    width: min(100%, 56rem);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.1rem;
+    padding: 0 0.75rem 5rem;
+    box-sizing: border-box;
+}
+
+/* Boxed title and the department dropdown follow the sketch. */
+.daily-title {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0.7rem 1rem;
+    border: 2px solid currentColor;
+    text-align: center;
+    font-size: clamp(1.3rem, 4vw, 1.8rem);
+}
+
+.daily-date {
+    margin: 0;
+    opacity: 0.7;
+}
+
+.daily-department {
+    min-width: 12rem;
+    min-height: 40px;
+    padding: 0.4rem 0.6rem;
+    font-size: 1rem;
+    border-radius: 8px;
+    border: 2px solid currentColor;
+    background: transparent;
+    color: inherit;
+}
+
+.daily-department:disabled {
+    opacity: 0.6;
+}
+
+/* Three columns separated by lines, like the sketch's table */
+.daily-board {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 2px solid currentColor;
+    box-sizing: border-box;
+}
+
+.daily-column {
+    min-height: 10rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: background 0.1s ease-in-out;
+}
+
+.daily-column + .daily-column {
+    border-left: 2px solid currentColor;
+}
+
+.daily-column-title,
+.daily-tray-title {
+    margin: 0;
+    padding: 0.5rem 0.4rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    border-bottom: 2px solid currentColor;
+}
+
+.daily-count {
+    display: inline-block;
+    min-width: 1.4em;
+    margin-left: 0.25rem;
+    padding: 0 0.3em;
+    border-radius: 10px;
+    background: rgba(9, 41, 46, 0.525);
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.daily-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.6rem;
+}
+
+/* Small name chips */
+.daily-chip {
+    padding: 0.25rem 0.65rem;
+    border: 1px solid rgba(128, 128, 128, 0.6);
+    border-radius: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    background: rgba(128, 128, 128, 0.12);
+}
+
+.daily-chip.is-draggable {
+    cursor: grab;
+}
+
+.daily-chip.is-dragging {
+    opacity: 0.35;
+}
+
+.daily-chip.is-overlay {
+    cursor: grabbing;
+    box-shadow: rgba(0, 0, 0, 0.35) 0 4px 12px;
+    opacity: 0.85;
+}
+
+/* Changed but not saved yet (also shows on a name waiting in Not recorded to be un-recorded) */
+.daily-chip.is-dirty {
+    outline: 1.5px dashed #b08bd1;
+    outline-offset: 1px;
+}
+
+.daily-chip--in {
+    border-color: rgb(0, 142, 43);
+    background: rgba(0, 200, 80, 0.15);
+}
+
+.daily-chip--partial-day {
+    border-color: rgba(248, 219, 33, 0.8);
+    background: rgba(255, 242, 0, 0.15);
+}
+
+.daily-chip--out {
+    border-color: rgb(220, 53, 69);
+    background: rgba(220, 53, 69, 0.15);
+}
+
+/* Highlight the zone a chip would land in */
+.daily-column.is-over,
+.daily-tray.is-over {
+    background: rgba(0, 255, 255, 0.08);
+}
+
+/* "Not recorded" area under the table */
+.daily-tray {
+    width: 100%;
+    box-sizing: border-box;
+    border: 2px dashed rgba(128, 128, 128, 0.8);
+    border-radius: 6px;
+    min-height: 5rem;
+    transition: background 0.1s ease-in-out;
+}
+
+.daily-tray-title {
+    border-bottom: 1px dashed rgba(128, 128, 128, 0.8);
+}
+
+.daily-empty {
+    opacity: 0.6;
+    font-size: 0.9rem;
+}
+
+.daily-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+}
+
+/* The blue Save button */
+.daily-save-btn {
+    min-height: 44px;
+    min-width: 7rem;
+    padding: 0.55rem 1.6rem;
+    border: none;
+    border-radius: 10px;
+    background: #1a73e8;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.daily-save-btn:hover:not(:disabled) {
+    background: #1562c6;
+}
+
+.daily-save-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.daily-unsaved {
+    font-size: 0.9rem;
+    color: #4da3ff;
+}
+
+.daily-notice {
+    margin: 0;
+}
+
+.daily-notice--ok {
+    color: #4caf50;
+}
+
+.daily-notice--error {
+    color: #ff6b6b;
+}
+
+/* ---- Tally: fixed bottom right, opposite the view toggle -------------------------------------
+   Same dark box as the view toggle, so the light grey total reads on any theme. */
+.daily-tally {
+    position: fixed;
+    right: max(1rem, env(safe-area-inset-right));
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    z-index: 40;
+    max-width: calc(100vw - 2rem);
+    box-sizing: border-box;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid #2b2b2b;
+    border-radius: 3px;
+    background: #272828;
+    color: #cecbcb;
+    text-align: right;
+    box-shadow: rgba(0, 0, 0, 0.3) 0 2px 8px;
+}
+
+.daily-tally-line {
+    font-size: 0.85rem;
+    line-height: 1.3;
+}
+
+/* Second line: a little bigger and light grey, so the total stands out */
+.daily-tally-total {
+    margin-top: 0.1rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: #ececec;
+}
+
+/* ---- User page ------------------------------------------------------------------------------ */
+.my-card {
+    width: min(100%, 30rem);
+    box-sizing: border-box;
+    padding: 1rem;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 12px;
+    background: rgba(128, 128, 128, 0.08);
+    text-align: center;
+}
+
+.my-name {
+    margin: 0 0 0.75rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.my-dept {
+    font-weight: 400;
+    opacity: 0.7;
+}
+
+.my-options {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.my-option {
+    min-height: 44px;
+    padding: 0.4rem 1.1rem;
+    border: 1px solid rgba(128, 128, 128, 0.6);
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+
+.my-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.my-option.is-selected {
+    font-weight: 700;
+    opacity: 1;
+}
+
+.my-option--in.is-selected {
+    border-color: rgb(0, 142, 43);
+    background: rgba(0, 200, 80, 0.2);
+}
+.my-option--in.is-selected:hover {
+    background: rgba(0, 200, 80, 0.3);
+}
+.my-option--partial-day.is-selected {
+    border-color: rgba(248, 219, 33, 0.8);
+    background: rgba(255, 242, 0, 0.2);
+}
+.my-option--partial-day.is-selected:hover {
+    background: rgba(255, 242, 0, 0.3);
+}
+.my-option--out.is-selected {
+    border-color: rgb(220, 53, 69);
+    background: rgba(220, 53, 69, 0.2);
+}
+.my-option--out.is-selected:hover {
+    background: rgba(220, 53, 69, 0.3);
+}
+.my-status {
+    margin: 0.9rem 0 0;
+    font-weight: 600;
+}
+
+.my-hint {
+    margin: 0.4rem 0 0;
+    font-size: 0.9rem;
+    opacity: 0.8;
+}
+
+.my-tally-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+}
+
+/* View toggle fixed at the bottom left (used by App.jsx on both pages) */
+.view-toggle {
+    position: fixed;
+    left: max(1rem, env(safe-area-inset-left));
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    z-index: 50;
+    min-height: 44px;
+    padding: 0.5rem 1.1rem;
+    border: 1px solid #2b2b2b;
+    border-radius: 3px;
+    background: #272828;
+    color: #cecbcb;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: rgba(0, 0, 0, 0.3) 0 2px 8px;
+}
+
+.view-toggle:hover {
+    background: #191919;
+    box-shadow: rgba(0, 0, 0, 0.5) 0 4px 12px;
+    transform: scale(1.02);
+    transition: all 0.1s ease-in-out;
+}
+
+/* Keeps the last bit of a page from hiding under the fixed toggle */
+.view-toggle-spacer {
+    height: 5rem;
+    width: 100%;
+    flex-shrink: 0;
+}
+
+/* Phones: the tally moves up above the toggle so the two never overlap */
+@media (max-width: 640px) {
+    .daily-tally {
+        bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 44px + 0.5rem);
+    }
+}
+
+@media (max-width: 420px) {
+    .daily {
+        padding: 0 0.4rem 8rem;
+    }
+
+    .daily-chips {
+        padding: 0.4rem;
+        gap: 0.3rem;
+    }
+
+    .daily-chip {
+        padding: 0.2rem 0.5rem;
+        font-size: 0.8rem;
+    }
+}
