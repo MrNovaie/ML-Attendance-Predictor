@@ -213,6 +213,58 @@
     color: #ff6b6b;
 }
 
+/* Warning before Save deletes records */
+.daily-confirm {
+    width: min(100%, 36rem);
+    box-sizing: border-box;
+    padding: 0.9rem 1rem;
+    border: 2px solid rgb(220, 53, 69);
+    border-radius: 8px;
+    background: rgba(220, 53, 69, 0.08);
+    text-align: center;
+}
+
+.daily-confirm-title {
+    margin: 0 0 0.35rem;
+    font-weight: 700;
+}
+
+.daily-confirm-text {
+    margin: 0 0 0.8rem;
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+
+.daily-confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.6rem;
+}
+
+.daily-confirm-btn {
+    min-height: 44px;
+    padding: 0.45rem 1rem;
+    border: 1px solid rgba(128, 128, 128, 0.7);
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.daily-confirm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.daily-confirm-btn--danger {
+    border-color: rgb(220, 53, 69);
+    background: rgb(220, 53, 69);
+    color: #fff;
+}
+
 /* ---- Tally: fixed bottom right, opposite the view toggle -------------------------------------
    Same dark box as the view toggle, so the light grey total reads on any theme. */
 .daily-tally {

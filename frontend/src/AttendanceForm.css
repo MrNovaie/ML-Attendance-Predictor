@@ -91,31 +91,7 @@
 .attendance-notice--error {
     color: #ff6b6b;
 }
-.attendance-actions button {
-    min-height: 36px;
-    padding: 0.35rem 0.75rem;
-    font-size: 0.9rem;
-    box-shadow: rgba(0, 0, 0, 0.1) 0px 1px 3px, rgba(0, 0, 0, 0.06) 0px 1px 2px;
-    width: auto;
-}
-.attendance-actions button:hover {
-    transition: all 0.1s ease-in-out;
-    background: rgba(0, 255, 255, 0.05);
-    transform: scale(1.02);
-}
-.attendance-actions button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-.attendance-label {
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-}
-.attendance-hint {
-    margin: 0.4rem 0 0;
-    font-size: 0.9rem;
-    opacity: 0.8;
-}
+
 .attendance-add-person {
     margin-top: 1.5rem;
     padding-top: 1rem;
@@ -128,11 +104,6 @@
     gap: 0.75rem;
     margin-top: 0.5rem;
 }
-.attendance-person-controls {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
 
 .attendance-departments {
     margin-top: 1.5rem;
@@ -143,7 +114,6 @@
 .attendance-departments-title {
     margin: 0;
     font-size: 1rem;
-    text-decoration: underline;
     font-weight: 600;
 }
 
@@ -152,4 +122,22 @@
     padding: 0.35rem 0.6rem;
     font-size: 1rem;
     border-radius: 2px;
+}
+
+.attendance-person-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.attendance-hint {
+    margin: 0.25rem 0 0;
+    font-size: 0.9rem;
+    opacity: 0.75;
+}
+
+.attendance-backup {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
 }

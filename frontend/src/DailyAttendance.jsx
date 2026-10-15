@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
     DndContext,
     DragOverlay,
@@ -12,7 +12,15 @@ import {
 } from '@dnd-kit/core'
 import AttendanceTally from './AttendanceTally'
 import MyAttendance from './MyAttendance'
-import { STATUSES, clsForStatus, describeError, readJson, shortDate, weekendMessage } from './AttendanceUtils'
+import {
+    STATUSES,
+    clsForStatus,
+    describeError,
+    downloadBackup,
+    readJson,
+    shortDate,
+    weekendMessage,
+} from './AttendanceUtils'
 import './DailyAttendance.css'
 
 const TRAY_ID = 'zone-tray'
@@ -76,6 +84,9 @@ function AdminBoard({ serverUrl, onSaved }) {
     const [saving, setSaving] = useState(false)
     const [notice, setNotice] = useState(null) // { type: 'ok' | 'error', text }
     const [activeId, setActiveId] = useState(null)
+    const [confirming, setConfirming] = useState(false) // asking "really remove these?" before saving
+    const [backupBusy, setBackupBusy] = useState(false)
+    const cancelRef = useRef(null)
 
     // Mouse needs a small movement before a drag starts. Touch needs a short press, so scrolling
     // the page by swiping over a chip still works.
@@ -132,6 +143,9 @@ function AdminBoard({ serverUrl, onSaved }) {
     // Everyone whose placement differs from the server. This covers people hidden by the filter,
     // and people dragged back to Not recorded (draft undefined while the server has a status).
     const changed = people.filter((p) => draft[p.id] !== saved[p.id])
+    // Saved records that this Save would delete (dragged back to Not recorded). Deleting is permanent.
+    const removals = changed.filter((p) => draft[p.id] === undefined && saved[p.id] !== undefined)
+    const showConfirm = confirming && removals.length > 0
     const unrecorded = visible.filter((p) => draft[p.id] === undefined)
     const activePerson = people.find((p) => `person-${p.id}` === activeId)
 
@@ -163,8 +177,29 @@ function AdminBoard({ serverUrl, onSaved }) {
         })
     }
 
+    // Save asks first when it would delete records; otherwise it saves straight away.
+    function requestSave() {
+        if (changed.length === 0 || saving) return
+        if (removals.length > 0) setConfirming(true)
+        else handleSave()
+    }
+
+    async function handleBackupFirst() {
+        setBackupBusy(true)
+        try {
+            const fileName = await downloadBackup(serverUrl)
+            setNotice({ type: 'ok', text: `Downloaded ${fileName}.` })
+        } catch (err) {
+            console.error('Downloading the backup failed:', err)
+            setNotice({ type: 'error', text: describeError(err) })
+        } finally {
+            setBackupBusy(false)
+        }
+    }
+
     async function handleSave() {
         if (changed.length === 0) return
+        setConfirming(false)
         // status null = remove the record (the person goes back to Not recorded)
         const records = changed.map((p) => ({ person_id: p.id, status: draft[p.id] ?? null }))
 
@@ -195,6 +230,11 @@ function AdminBoard({ serverUrl, onSaved }) {
             setSaving(false)
         }
     }
+
+    // Put the keyboard on the safe choice when the question appears.
+    useEffect(() => {
+        if (showConfirm) cancelRef.current?.focus()
+    }, [showConfirm])
 
     if (clock?.weekend) {
         return (
@@ -293,12 +333,59 @@ function AdminBoard({ serverUrl, onSaved }) {
                 )
             )}
 
-            {!loading && clock && (
+            {!loading && clock && showConfirm && (
+                <div
+                    className="daily-confirm"
+                    role="alertdialog"
+                    aria-labelledby="daily-confirm-title"
+                    aria-describedby="daily-confirm-text"
+                    onKeyDown={(e) => {
+                        if (e.key === 'Escape') setConfirming(false)
+                    }}
+                >
+                    <p id="daily-confirm-title" className="daily-confirm-title">
+                        Remove today&apos;s attendance for these {countPeople(removals.length)} people: {removals.map((p) => p.name).join(', ')}?
+                    </p>
+                    <p id="daily-confirm-text" className="daily-confirm-text">
+                        These records are deleted permanently and the
+                        predictions are recalculated without them.
+                    </p>
+                    <div className="daily-confirm-actions">
+                        <button
+                            type="button"
+                            className="daily-confirm-btn"
+                            onClick={handleBackupFirst}
+                            disabled={backupBusy || saving}
+                        >
+                            {backupBusy ? 'Preparing…' : 'Download backup first'}
+                        </button>
+                        <button
+                            type="button"
+                            className="daily-confirm-btn"
+                            ref={cancelRef}
+                            onClick={() => setConfirming(false)}
+                            disabled={saving}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            className="daily-confirm-btn daily-confirm-btn--danger"
+                            onClick={handleSave}
+                            disabled={saving}
+                        >
+                            {saving ? 'Saving…' : 'Remove and save'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {!loading && clock && !showConfirm && (
                 <div className="daily-actions">
                     <button
                         type="button"
                         className="daily-save-btn"
-                        onClick={handleSave}
+                        onClick={requestSave}
                         disabled={saving || changed.length === 0}
                         aria-busy={saving}
                     >
