@@ -13,7 +13,7 @@ A small full-stack app that tracks weekday attendance and predicts it from histo
   - **Admins:** a drag-and-drop board (In / Partial Day / Out, plus a *Not Recorded* tray) with a department dropdown and a blue **Save** button. Works with mouse, touch (press and hold briefly, then drag) and keyboard. Dragging a saved name back to *Not Recorded* and saving **un-records** it, after a warning that offers to download a backup first.
   - **Everyone else:** their own status, three buttons to change it until the daily cutoff (08:15 UTC+8), and a head-count with no names.
   - **Tally** at the bottom right: individual statuses `In, Partial Day, Out`, with total on a second, larger line.
-- **Departments** — each person belongs to one (a dropdown; blank means *In holding*)
+- **Departments** — each person belongs to one (a dropdown; blank means *Holding*)
 - **Login ↔ person link** — an admin links each account to the person it belongs to, which is what lets that user set their own attendance
 - **Backup and restore** — download everyone and all attendance as one CSV (admin), and load it back with a command
 - **In-app attendance entry** for any past weekday — record or correct each person's status (admin)
