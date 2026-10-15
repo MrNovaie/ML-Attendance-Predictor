@@ -1,6 +1,11 @@
 .user-admin-section {
     margin-top: 2rem;
     text-align: left;
+    width: 100%;
+    max-width: 36rem;
+    margin-left: auto;
+    margin-right: auto;
+    box-sizing: border-box;
 }
 
 .user-admin-section summary {
@@ -11,7 +16,7 @@
 .user-admin-list {
     list-style: none;
     padding: 0;
-    margin: 1rem 0;
+    margin: 0.5rem 0;
 }
 
 .user-admin-row {
@@ -24,16 +29,18 @@
 }
 
 .user-admin-tag {
-    margin-left: 0.4rem;
     opacity: 0.7;
     font-size: 0.85em;
 }
 
 .user-admin-tag--admin {
-    padding: 0.05rem 0.5rem;
-    border: 1px solid cyan;
-    border-radius: 999px;
+    margin-left: 0.5rem;
+    color: #4caf50;
+    padding: 0.1rem 0.3rem 0.2rem 0.3rem;
+    border: 1px solid rgb(4, 255, 0);
+    border-radius: 10px;
     opacity: 1;
+    font-weight: 600;
 }
 
 .user-admin-form {

@@ -4,11 +4,12 @@ import click
 import math
 from datetime import date, datetime, timedelta, timezone
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from flask_login import login_user, login_required, logout_user, current_user
 from functools import wraps
 from extensions import db, login_manager
+import backup
 from import_csv import import_csv
 from ml import input_to_date, get_name_list, load_data, predict_all_for_date, evaluate_all, invalidate_models
 
@@ -23,7 +24,6 @@ from werkzeug.security import check_password_hash, generate_password_hash
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 
-# Variables HERE or in .env are read at app boot time. Changing them later has no effect.
 # The office runs on UTC+8. "Today" and the self-service cutoff are judged in this timezone and not
 # in the server's, so they stay right when the server clock is UTC.
 TIMEZONE_OFFSET_HOURS = 8
@@ -193,7 +193,8 @@ def create_app() -> Flask:
     # Flask-Login session cookie on cross-origin fetches; the frontend must
     # also set fetch(..., { credentials: "include" }). Origin must be exact
     # (no "*") when credentials are enabled.
-    CORS(app, supports_credentials=True, origins=["http://localhost:5173"])
+    CORS(app, supports_credentials=True, origins=["http://localhost:5173"],
+         expose_headers=["Content-Disposition"])  # lets the frontend read the download's file name
     db.init_app(app)
     login_manager.init_app(app)
     @login_manager.unauthorized_handler
@@ -655,6 +656,46 @@ def create_app() -> Flask:
             not_recorded=total - sum(by_status.values()),
             total=total,
         )
+
+    '''Backup'''
+    @app.get("/api/export/attendance.csv")
+    @login_required
+    @admin_required
+    def export_attendance_csv():
+        """Everyone and every attendance record as one CSV (format described in backup.py)."""
+        filename = f"attendance-backup-{local_today().isoformat()}.csv"
+        return Response(
+            backup.export_csv_text(),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",  # it is a copy of everything: do not let anything cache it
+            },
+        )
+
+    @app.cli.command("export-backup")
+    @click.argument("path", type=click.Path(dir_okay=False, writable=True))
+    def export_backup_command(path):
+        """Write the attendance backup CSV to PATH (the same file the Download backup button gives)."""
+        Path(path).write_text(backup.export_csv_text(), encoding="utf-8", newline="")
+        click.echo(f"Backup written to {path}")
+
+    @app.cli.command("import-backup")
+    @click.argument("path", type=click.Path(exists=True, dir_okay=False))
+    @click.option("--replace", is_flag=True,
+                  help="Delete ALL current people and attendance first. Without it, the database must be empty.")
+    @click.option("--yes", is_flag=True, help="Do not ask for confirmation with --replace.")
+    def import_backup_command(path, replace, yes):
+        """Load a backup CSV made by export-backup (or the Download backup button)."""
+        if replace and not yes:
+            click.confirm("This deletes every current person and attendance record first. Continue?", abort=True)
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as handle:
+                result = backup.restore_csv(handle, allowed_statuses=ALLOWED_STATUSES, replace=replace)
+        except backup.BackupError as err:
+            raise click.ClickException(str(err))
+        click.echo(f"Restored {result['people']} people and {result['records']} attendance records.")
+        click.echo("Logins are not part of a backup: link them to people again under Record attendance.")
 
     return app
 

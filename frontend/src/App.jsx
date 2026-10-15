@@ -3,6 +3,8 @@ import './App.css'
 import './AttendanceForm'
 import './UserManagement'
 import AttendanceForm from './AttendanceForm'
+import PeopleSection from './PeopleSection'
+import BackupSection from './BackupSection'
 import UserManagement from './UserManagement'
 import DailyAttendance from './DailyAttendance'
 
@@ -24,6 +26,7 @@ function App() {
     const [authNotice, setAuthNotice] = useState('')
     const [view, setView] = useState('predictions') // 'predictions' | 'attendance'
     const [predictionsVersion, setPredictionsVersion] = useState(0) // bumped after attendance is saved
+    const [peopleVersion, setPeopleVersion] = useState(0) // bumped after the People section adds a person or moves a link
 
     const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     const dayName = date ? daysOfWeek[new Date(date).getDay()] : ''
@@ -222,7 +225,11 @@ function App() {
                             </details>
                         )}
                     </div>
-                    {isAdmin && <AttendanceForm serverUrl={SERVER_URL} />}
+                    {isAdmin && <AttendanceForm serverUrl={SERVER_URL} peopleVersion={peopleVersion} />}
+                    {isAdmin && (
+                        <PeopleSection serverUrl={SERVER_URL} onPeopleChanged={() => setPeopleVersion((v) => v + 1)} />
+                    )}
+                    {isAdmin && <BackupSection serverUrl={SERVER_URL} />}
                     {isAdmin && <UserManagement serverUrl={SERVER_URL} currentUsername={user} />}
                 </>
             )}
