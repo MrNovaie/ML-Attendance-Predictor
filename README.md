@@ -10,7 +10,7 @@ A small full-stack app that tracks weekday attendance and predicts it from histo
 - **Per-person confidence** and sample size (how many past matching weekdays that person has on record)
 - **Model evaluation** (80/20 holdout accuracy vs a simple baseline)
 - **Today's Attendance page** — switch to it with the button fixed at the bottom left
-  - **Admins:** a drag-and-drop board (In / Partial Day / Out, plus a *Not Recorded* tray) with a department dropdown and a blue **Save** button. Works with mouse, touch (press and hold briefly, then drag) and keyboard. Dragging a saved name back to *Not recorded* and saving **un-records** it, after a warning that offers to download a backup first.
+  - **Admins:** a drag-and-drop board (In / Partial Day / Out, plus a *Not Recorded* tray) with a department dropdown and a blue **Save** button. Works with mouse, touch (press and hold briefly, then drag) and keyboard. Dragging a saved name back to *Not Recorded* and saving **un-records** it, after a warning that offers to download a backup first.
   - **Everyone else:** their own status, three buttons to change it until the daily cutoff (08:15 UTC+8), and a head-count with no names.
   - **Tally** at the bottom right: individual statuses `In, Partial Day, Out`, with total on a second, larger line.
 - **Departments** — each person belongs to one (a dropdown; blank means *In holding*)
@@ -368,7 +368,7 @@ Later:
 ## Version history
 - **v0.5** (in progress) — Backup and restore: admin download of everyone and all attendance as one CSV, export-backup / import-backup commands with whole-file validation. A warning (with Download backup first) before Save deletes records. First automated tests (pytest, backup).
 - **v0.4** — Un-record attendance (drag back to *Not Recorded*, plus forced model retrain). Self-service: users set their own status until 08:15 UTC+8, enforced by the server. Login ↔ person link, managed by admins. Tally with total at the bottom right (admin and user pages). Office clock fixed to UTC+8. `GET /api/attendance` and `PUT /api/attendance` are admin-only. New endpoints: `/api/today`, `/api/me/attendance`, `/api/attendance/summary`; `PATCH /api/people/<id>` now links logins.
-- **v0.3** — Today's Attendance page with a bottom-left toggle, department dropdown, drag-and-drop columns with a *Not recorded* tray, and a blue Save button (mouse, touch, keyboard). Departments (dropdown, default *Holding*, NOT NULL). Predictions refresh after attendance is saved.
+- **v0.3** — Today's Attendance page with a bottom-left toggle, department dropdown, drag-and-drop columns with a *Not Recorded* tray, and a blue Save button (mouse, touch, keyboard). Departments (dropdown, default *Holding*, NOT NULL). Predictions refresh after attendance is saved.
 - **v0.2** — Predictions and evaluation, in-app attendance entry, add people, user accounts and user management, SQLite as the source of truth.
 
 ## License
