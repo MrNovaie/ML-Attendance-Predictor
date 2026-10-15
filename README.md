@@ -94,7 +94,7 @@ cd backend
 python app.py
 ```
 
-The database file lives next to `app.py` (`backend/attendance.db`), so `python app.py` and `flask --app app ...` always use the same database regardless of where you launch them from.
+The database file lives next to `app.py` (`backend/attendance.db`), so `python app.py` and `flask --app app ...` always use the same database regardless of where it is launched from.
 
 On start the app will:
 
@@ -115,7 +115,7 @@ Nobody is an admin by default, and admin accounts are what unlock attendance ent
 flask --app app create-admin <username>
 ```
 
-You'll be prompted for a password. Other accounts can be created by an admin in the UI, or through open registration (see limitations).
+A prompt for a password will appear. Other accounts can be created by an admin in the UI, or through open registration (see limitations).
 
 ### 4. Frontend
 
@@ -150,11 +150,11 @@ Changing the department list does not rewrite existing people: someone whose dep
 - One column per person (attendance codes: `0` = Out, `1` = In, `2` = Partial Day)
 - `Day of Week`: `1` = Mon … `5` = Fri (matches the ML encoding). Weekend rows are not allowed.
 
-Set `YEAR` in `backend/import_csv.py` and `backend/ml.py` to match your sheet. Imported people start in *Holding*; set their departments under **Record attendance → Departments and logins**.
+Set `YEAR` in `backend/import_csv.py` and `backend/ml.py` to match the sheet. Imported people start in *Holding*; set their departments under **Record attendance → Departments and logins**.
 
 ### Starting without a CSV
 
-Start with an empty database, then use the admin section **Record attendance → Add a person to track** to build your roster, and record days as they happen. A person needs some history before they get predictions (see below).
+Start with an empty database, then use the admin section **Record attendance → Add a person to track** to build a customised roster, and record days as they happen. A person needs some history before they get predictions (see below).
 
 ### Backing up
 
@@ -164,7 +164,7 @@ Because edits live only in the database, **copy `backend/attendance.db` before a
 
 1. Start backend and frontend.
 2. Create an admin (step 3 above) and **log in**.
-3. Under **Record attendance**, add the people you want to track, each with a department (skip if you seeded from a CSV).
+3. Under **Record attendance**, add the people you want to track, each with a department (skip if seeded from a CSV).
 4. Optionally record past days: pick a weekday, set each person's status (In / Out / Partial day), and save.
 5. Under **Record attendance → Departments and logins**, link each user's login to their person (see below).
 6. Click **Today's Attendance** (bottom left) to mark today, and **Predictions** to switch back.
@@ -213,7 +213,7 @@ All endpoints except register and login need an authenticated session. Browser r
 | PATCH | `/api/people/<id>` | Admin | Change `{department?, user_id?}` — `user_id` links a login (or `null` unlinks) |
 | GET | `/api/users` | Admin | List accounts (includes `person_id`) |
 | POST | `/api/users` | Admin | Create account: `{username, password, is_admin?}` |
-| DELETE | `/api/users/<id>` | Admin | Remove an account (you cannot remove yourself) |
+| DELETE | `/api/users/<id>` | Admin | Remove an account (cannot remove ownself) |
 
 **Recording rules for `PUT /api/attendance`:** weekdays only, not in the future (judged in UTC+8), each `person_id` must exist and appear once, and the request is all-or-nothing. Every record needs a `status` key: `0`, `1` or `2` (integers only), or `null` to **remove** that person's record for the day. The response is `{status, date, saved, removed}`. Removing anything clears the model cache (see below).
 
@@ -274,12 +274,12 @@ A `401` means the session is not logged in at all (for example a failed login), 
 - **A blank page** in the browser is usually a JavaScript error. Check the DevTools console. Hooks (`useState` etc.) must be called inside a component.
 - **An import fails with a missing `./attendanceUtils`:** the file must be named exactly `attendanceUtils.js` (lowercase `a`). Windows ignores filename case, but Linux, macOS and CI do not.
 - **"Your account isn't linked to a person yet"** is expected for a new login. An admin links it under **Record attendance → Departments and logins**.
-- **Two different databases**: use `flask --app app` and `python app.py` from any directory; both resolve the same file. If you ever see data "missing", check which `attendance.db` you are looking at.
+- **Two different databases**: use `flask --app app` and `python app.py` from any directory; both resolve the same file. If data is "missing", check which `attendance.db` is being referenced.
 
 ## Known limitations
 
 - **Not production-ready:** open registration, no CSRF protection, no login rate limiting.
-- **The database is the only copy of your attendance.** The CSV is just a seed, and there is no DB → CSV export yet. Un-recording is a permanent delete.
+- **The database is the only copy of attendance.** The CSV is just a seed, and there is no DB → CSV export yet. Un-recording is a permanent delete.
 - **The stale-schema rebuild drops `person` and `attendance_record`** when the attendance table is missing expected columns. Back up before upgrading an old database.
 - **No Alembic migrations.** Startup adds `person.department` and `user.person_id` itself, but any other schema change needs manual SQL or a rebuild.
 - **People can be added but not removed or renamed** from the UI. Deleting a login simply unlinks it; person deletion is not available.
