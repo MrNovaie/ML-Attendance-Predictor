@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import './App.css'
-import './AttendanceForm'
-import './UserManagement'
 import AttendanceForm from './AttendanceForm'
 import PeopleSection from './PeopleSection'
 import BackupSection from './BackupSection'
 import UserManagement from './UserManagement'
 import DailyAttendance from './DailyAttendance'
+import FilterBar from './FilterBar'
+import { matchesSearch } from './AttendanceUtils'
 
 const SERVER_URL = 'http://localhost:5000'
 
@@ -16,6 +16,9 @@ function App() {
     const [isAdmin, setIsAdmin] = useState(false)
     const [date, setDate] = useState(targetDate.toISOString().split('T')[0])
     const [predictions, setPredictions] = useState([])
+    const [people, setPeople] = useState([]) // [{ id, name, department }], admins only: used by the department filter
+    const [department, setDepartment] = useState('') // '' = all departments
+    const [search, setSearch] = useState('')
     const [message, setMessage] = useState('')
     const [evalLoading, setEvalLoading] = useState(false)
     const [evalResult, setEvalResult] = useState(null)
@@ -30,6 +33,22 @@ function App() {
 
     const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     const dayName = date ? daysOfWeek[new Date(date).getDay()] : ''
+
+    // Predictions are admin-only, so everyone else lives on the attendance page and has no way to switch.
+    const activeView = isAdmin ? view : 'attendance'
+
+    // Department of each person, and the departments somebody is actually in
+    const departmentOf = useMemo(() => new Map(people.map((p) => [p.name, p.department])), [people])
+    const departments = useMemo(
+        () => [...new Set(people.map((p) => p.department).filter(Boolean))].sort(),
+        [people],
+    )
+    const passesFilter = useCallback(
+        (name) => (!department || departmentOf.get(name) === department) && matchesSearch(name, search),
+        [department, departmentOf, search],
+    )
+    const shownPredictions = predictions.filter((prediction) => passesFilter(prediction.person))
+    const filtering = Boolean(department || search.trim())
 
     const refreshUser = useCallback(async () => {
         try {
@@ -54,7 +73,7 @@ function App() {
     }, [refreshUser])
 
     useEffect(() => {
-        if (!user || !date) return
+        if (!user || !isAdmin || !date) return
 
         fetch(`${SERVER_URL}/api/predict?date=${date}`, { credentials: 'include' })
             .then(async (response) => {
@@ -72,7 +91,16 @@ function App() {
                 setPredictions([])
                 setMessage('Could not reach the server.')
             })
-    }, [user, date, predictionsVersion])
+    }, [user, isAdmin, date, predictionsVersion])
+
+    // Who exists and which department they are in (for the filter). Reloaded when someone is added or moved.
+    useEffect(() => {
+        if (!user || !isAdmin) return
+        fetch(`${SERVER_URL}/api/people`, { credentials: 'include' })
+            .then((response) => (response.ok ? response.json() : []))
+            .then(setPeople)
+            .catch((err) => console.error('Loading people failed:', err))
+    }, [user, isAdmin, peopleVersion, predictionsVersion])
 
     async function runEvaluation() {
         setEvalLoading(true)
@@ -136,9 +164,9 @@ function App() {
         <div className="app-container">
             <div className="auth-bar">
                 <span>Welcome back, <strong style={{ color: 'cyan', fontFamily: 'cursive'}}>{user}</strong></span>
-                <LogoutButton onLogout={() => {setUser(null); setIsAdmin(false); setView('predictions')} } />
+                <LogoutButton onLogout={() => {setUser(null); setIsAdmin(false); setView('predictions'); setDepartment(''); setSearch(''); setPeople([])} } />
             </div>
-            {view === 'attendance' ? (
+            {activeView === 'attendance' ? (
                 <DailyAttendance
                     serverUrl={SERVER_URL}
                     isAdmin={isAdmin}
@@ -147,17 +175,26 @@ function App() {
             ) : (
                 <>
                     <h1 className="title">Attendance Predictor</h1>
-                    <label htmlFor="date-input" className="date-input">Select a date: </label>
-                    <input
-                        id="date-input"
-                        type="date"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
+                    <FilterBar
+                        departments={departments}
+                        department={department}
+                        onDepartmentChange={setDepartment}
+                        search={search}
+                        onSearchChange={setSearch}
+                        date={date}
+                        onDateChange={setDate}
                     />
                     <p className="message">{message}</p>
+                    {filtering && predictions.length > 0 && (
+                        <p className="filter-summary" role="status">
+                            {shownPredictions.length === 0
+                                ? 'No one matches the filter.'
+                                : `Showing ${shownPredictions.length} of ${predictions.length}`}
+                        </p>
+                    )}
                     <ul className="predictions-list">
-                        {predictions.map((prediction, index) => (
-                            <li key={index} className ="prediction-item">
+                        {shownPredictions.map((prediction) => (
+                            <li key={prediction.person} className ="prediction-item">
                                 {prediction.person}: <span className={`badge badge-${prediction.verdict.toLowerCase().replaceAll(' ', '-')}`}> {prediction.verdict} </span> 
                                 <span className="bar-text">Confidence Score</span>
                                 <div className="bar-bg">
@@ -186,7 +223,7 @@ function App() {
                             <details open className="eval-details">
                                 <summary>Model accuracy (holdout test)</summary>
                                 <ul className="eval-list">
-                                    {evalResult.evaluations.map((row) => (
+                                    {evalResult.evaluations.filter((row) => passesFilter(row.person)).map((row) => (
                                         <li key={row.person} className="eval-item">
                                             <strong>{row.person}</strong>: <span className="badge badge-eval">{row.accuracy_pct}% accuracy</span>{' '}
                                             (n={row.n_samples})
@@ -233,13 +270,15 @@ function App() {
                     {isAdmin && <UserManagement serverUrl={SERVER_URL} currentUsername={user} />}
                 </>
             )}
-            <button
-                type="button"
-                className="view-toggle"
-                onClick={() => setView(view === 'attendance' ? 'predictions' : 'attendance')}
-            >
-                {view === 'attendance' ? 'Predictions' : "Today's Attendance"}
-            </button>
+            {isAdmin && (
+                <button
+                    type="button"
+                    className="view-toggle"
+                    onClick={() => setView(activeView === 'attendance' ? 'predictions' : 'attendance')}
+                >
+                    {activeView === 'attendance' ? 'Predictions' : "Today's Attendance"}
+                </button>
+            )}
             <div className="view-toggle-spacer" aria-hidden="true" />
         </div>
     )

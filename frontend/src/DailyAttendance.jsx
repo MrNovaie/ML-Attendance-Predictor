@@ -12,11 +12,13 @@ import {
 } from '@dnd-kit/core'
 import AttendanceTally from './AttendanceTally'
 import MyAttendance from './MyAttendance'
+import FilterBar from './FilterBar'
 import {
     STATUSES,
     clsForStatus,
     describeError,
     downloadBackup,
+    matchesSearch,
     readJson,
     shortDate,
     weekendMessage,
@@ -80,6 +82,7 @@ function AdminBoard({ serverUrl, onSaved }) {
     const [saved, setSaved] = useState({}) // what the server has: { [personId]: 0 | 1 | 2 }
     const [draft, setDraft] = useState({}) // what the board shows right now
     const [department, setDepartment] = useState('') // '' = all departments
+    const [search, setSearch] = useState('') // part of a name; narrows the board, never what Save sends
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [notice, setNotice] = useState(null) // { type: 'ok' | 'error', text }
@@ -132,13 +135,16 @@ function AdminBoard({ serverUrl, onSaved }) {
         [people],
     )
 
-    const visible = useMemo(
+    // Everyone in the chosen department. The head-count below is about this list, whatever is typed in the search.
+    const inDepartment = useMemo(
         () =>
             people
                 .filter((p) => !department || p.department === department)
                 .sort((a, b) => a.name.localeCompare(b.name)),
         [people, department],
     )
+    // What the board shows: the department, narrowed by the search
+    const visible = useMemo(() => inDepartment.filter((p) => matchesSearch(p.name, search)), [inDepartment, search])
 
     // Everyone whose placement differs from the server. This covers people hidden by the filter,
     // and people dragged back to Not Recorded (draft undefined while the server has a status).
@@ -153,13 +159,13 @@ function AdminBoard({ serverUrl, onSaved }) {
     const tally = useMemo(() => {
         const byStatus = {}
         let notRecorded = 0
-        for (const p of visible) {
+        for (const p of inDepartment) {
             const s = draft[p.id]
             if (s === undefined) notRecorded += 1
             else byStatus[s] = (byStatus[s] ?? 0) + 1
         }
-        return { byStatus, notRecorded, total: visible.length }
-    }, [visible, draft])
+        return { byStatus, notRecorded, total: inDepartment.length }
+    }, [inDepartment, draft])
 
     function handleDragEnd({ active, over }) {
         setActiveId(null)
@@ -250,21 +256,13 @@ function AdminBoard({ serverUrl, onSaved }) {
             <h1 className="daily-title">Today&apos;s Attendance</h1>
             {clock && <p className="daily-date">{shortDate(clock.date)}</p>}
 
-            <select
-                className="daily-department"
-                aria-label="Department"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                disabled={departments.length === 0}
-                title={departments.length === 0 ? 'No departments have been set up yet' : undefined}
-            >
-                <option value="">All departments</option>
-                {departments.map((d) => (
-                    <option key={d} value={d}>
-                        {d}
-                    </option>
-                ))}
-            </select>
+            <FilterBar
+                departments={departments}
+                department={department}
+                onDepartmentChange={setDepartment}
+                search={search}
+                onSearchChange={setSearch}
+            />
 
             {loading ? (
                 <p className="message">Loading…</p>
@@ -317,7 +315,9 @@ function AdminBoard({ serverUrl, onSaved }) {
                                     />
                                 ))}
                                 {unrecorded.length === 0 && (
-                                    <span className="daily-empty">Everyone is accounted for.</span>
+                                    <span className="daily-empty">
+                                        {search.trim() ? 'Nobody is here.' : 'Everyone is accounted for.'}
+                                    </span>
                                 )}
                             </div>
                         </DropZone>

@@ -8,7 +8,7 @@
     box-sizing: border-box;
 }
 
-/* Boxed title and the department dropdown follow the sketch. */
+/* Boxed title follows the sketch (the department filter and search are in FilterBar.css). */
 .daily-title {
     width: 100%;
     box-sizing: border-box;
@@ -22,21 +22,6 @@
 .daily-date {
     margin: 0;
     opacity: 0.7;
-}
-
-.daily-department {
-    min-width: 12rem;
-    min-height: 40px;
-    padding: 0.4rem 0.6rem;
-    font-size: 1rem;
-    border-radius: 8px;
-    border: 2px solid currentColor;
-    background: transparent;
-    color: inherit;
-}
-
-.daily-department:disabled {
-    opacity: 0.6;
 }
 
 /* Three columns separated by lines, like the sketch's table */

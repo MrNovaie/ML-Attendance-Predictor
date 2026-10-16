@@ -38,15 +38,6 @@
     padding-bottom: 2%;
 }
 
-.date-input {
-    font-weight: 600;
-    font-size: 1.2rem;
-    margin: 10px 0;
-}
-#date-input {
-    padding: 5px;
-    font-size: 1rem;
-}
 .message {
     margin-top: 3%;
     font-size: 1.25rem;
@@ -259,4 +250,9 @@
   font-size: 0.8rem;
   line-height: 1.35;
   margin-bottom: 1rem;
+}
+
+.filter-summary {
+    margin: 0.5rem 0 0;
+    opacity: 0.75;
 }

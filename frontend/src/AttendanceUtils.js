@@ -76,3 +76,9 @@ export async function readJson(response) {
     if (data === null) throw new Error('Unexpected response from the server.')
     return data
 }
+
+/** True when `name` passes the search text (case-insensitive, anywhere in the name). */
+export function matchesSearch(name, search) {
+    const query = search.trim().toLowerCase()
+    return !query || name.toLowerCase().includes(query)
+}
