@@ -26,7 +26,7 @@ import './DailyAttendance.css'
 const TRAY_ID = 'zone-tray'
 
 function zoneToStatus(zoneId) {
-    // 'zone-1' -> 1, 'zone-tray' -> undefined (not recorded)
+    // 'zone-1' -> 1, 'zone-tray' -> undefined (Not Recorded)
     const key = String(zoneId).replace('zone-', '')
     return key === 'tray' ? undefined : Number(key)
 }
@@ -72,7 +72,7 @@ function PersonChip({ person, status, dirty }) {
     )
 }
 
-// Admin view: drag names between In / Partial Day / Out, or back to Not recorded, then Save.
+// Admin view: drag names between In / Partial Day / Out, or back to Not Recorded, then Save.
 function AdminBoard({ serverUrl, onSaved }) {
     // "Today" as the server sees it (UTC+8), so it does not depend on this browser's timezone.
     const [clock, setClock] = useState(null) // { date, weekend }
@@ -141,9 +141,9 @@ function AdminBoard({ serverUrl, onSaved }) {
     )
 
     // Everyone whose placement differs from the server. This covers people hidden by the filter,
-    // and people dragged back to Not recorded (draft undefined while the server has a status).
+    // and people dragged back to Not Recorded (draft undefined while the server has a status).
     const changed = people.filter((p) => draft[p.id] !== saved[p.id])
-    // Saved records that this Save would delete (dragged back to Not recorded). Deleting is permanent.
+    // Saved records that this Save would delete (dragged back to Not Recorded). Deleting is permanent.
     const removals = changed.filter((p) => draft[p.id] === undefined && saved[p.id] !== undefined)
     const showConfirm = confirming && removals.length > 0
     const unrecorded = visible.filter((p) => draft[p.id] === undefined)
@@ -200,7 +200,7 @@ function AdminBoard({ serverUrl, onSaved }) {
     async function handleSave() {
         if (changed.length === 0) return
         setConfirming(false)
-        // status null = remove the record (the person goes back to Not recorded)
+        // status null = remove the record (the person goes back to Not Recorded)
         const records = changed.map((p) => ({ person_id: p.id, status: draft[p.id] ?? null }))
 
         setSaving(true)
@@ -305,7 +305,7 @@ function AdminBoard({ serverUrl, onSaved }) {
 
                         <DropZone id={TRAY_ID} className="daily-tray">
                             <h2 className="daily-tray-title">
-                                Not recorded <span className="daily-count">{unrecorded.length}</span>
+                                Not Recorded <span className="daily-count">{unrecorded.length}</span>
                             </h2>
                             <div className="daily-chips">
                                 {unrecorded.map((p) => (

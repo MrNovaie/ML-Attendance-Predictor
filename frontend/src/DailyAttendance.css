@@ -119,7 +119,7 @@
     opacity: 0.85;
 }
 
-/* Changed but not saved yet (also shows on a name waiting in Not recorded to be un-recorded) */
+/* Changed but not saved yet (also shows on a name waiting in Not Recorded to be un-recorded) */
 .daily-chip.is-dirty {
     outline: 1.5px dashed #b08bd1;
     outline-offset: 1px;
@@ -146,7 +146,7 @@
     background: rgba(0, 255, 255, 0.08);
 }
 
-/* "Not recorded" area under the table */
+/* "Not Recorded" area under the table */
 .daily-tray {
     width: 100%;
     box-sizing: border-box;

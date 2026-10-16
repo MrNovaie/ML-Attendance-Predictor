@@ -10,96 +10,112 @@ v0.3
 v0.4
 - Un-record attendance (drag back to Not recorded + Save), with a forced model retrain after deletions.
 - Self-service: a logged-in user can change their own attendance until 08:15 UTC+8, resets every day, enforced by the server.
-- Login <-> person link, set by admins under Record attendance > Departments and logins.
+- Login <-> person link, set by admins (now under People > Departments and logins).
 - Tally at the bottom right ("In 3 · Partial 1 · Out 2 · Not recorded 1", then "(of 7)"), for admins and for users (counts only).
 - "Today" is now judged in UTC+8, not the server's timezone. GET and PUT /api/attendance are admin-only.
 - README updated to v0.4.
 
 v0.5 (in progress)
-- Backup: admins download everyone's attendance as one CSV (person, department, date, status) from Record attendance > Backup.
+- Backup: admins download everyone's attendance as one CSV (person, department, date, status) from the Backup section.
   Same file from the command line: flask --app app export-backup backup.csv
 - Restore: flask --app app import-backup backup.csv [--replace] [--yes]. The whole file is checked first and written in one
   transaction, so a bad file changes nothing. Refuses a non-empty database unless --replace. Logins are not in the backup.
 - Warning before un-recording: Save lists the people whose records will be deleted, with "Download backup first", "Cancel"
   and "Remove and save".
-- Automated backend tests (pytest, tests/): 31 tests so far, covering the backup/restore only.
-- README brought up to date (title, configuration table, CORS, backups-in-git warning, tests section).
+- Backend tests (pytest, tests/): 268 tests. Permissions on every route (a new route that is not listed fails the suite),
+  accounts, attendance entry and un-record + model-cache clearing, the 08:15 cutoff and UTC+8 clock at their edges, links,
+  the tally, predictions, database constraints, startup migrations, backup/restore. Checked by breaking the code on purpose:
+  21 deliberate bugs, all caught.
+- Admin screen split into three sections, each its own file: Record attendance (AttendanceForm.jsx), People
+  (PeopleSection.jsx: "Add a person" + "Departments and logins"), Backup (BackupSection.jsx). "Add a person to track" is now
+  "Add a person". Adding a person or moving a login link refreshes the Record attendance list without a page reload.
+- README brought up to date (title, configuration table, CORS, backups-in-git warning, tests, new section names).
 
 
-NEXT, in this order
+TO DO  (planned use: about 10 admins and 50 accounts. When all seven are done, the project is FINISHED.)
 
-1. Automated tests for the rest of the backend (build on tests/conftest.py)
-   Self-service and the 08:15 cutoff, attendance PUT / un-record + model cache invalidation, 401 and 403 on every admin route,
-   login <-> person links, the tally/summary, weekends, the UTC+8 date, the startup migrations.
-   Then component tests for the frontend (vitest + jsdom); the scratch ones in verify/ are not in the repo yet.
+1. Admin-only Predictions, plus the name search and department filter
+   Everyone's names and predicted status are visible to every login, so with 50 real accounts this is the privacy fix. The search
+   also stops being a nicety once the Not Recorded tray holds 50 names.
+   - @admin_required on /api/predict, /api/evaluate and /api/people (check what MyAttendance needs first), and hide the toggle and
+     page for non-admins. test_permissions.py will tell you which table rows to move.
+   - Name search bar and department filter beside the calendar. PC: department on the left of the calendar, search on the right.
+     Phone: calendar and filter as squarish icon buttons next to / under the search bar (icons to be supplied).
 
-2. Admin-only Predictions, plus search and filters
-   Only admins see Predictions: @admin_required on /api/predict, /api/evaluate and /api/people (check what MyAttendance needs
-   first), and hide the toggle and page for non-admins.
-   Name search bar and department filter beside the calendar. PC: department on the left of the calendar, search on the right.
-   Phone: calendar and filter as squarish icon buttons next to / under the search bar (icons to be supplied).
+2. Account management for 50 people
+   - Close open registration. (Ideally make admin account creation a 2FA process.)
+   - If registration stays open for a while: an optional department request (default Holding) that an admin confirms.
+     Do not create a person at sign-up.
+   - Add a way to reset or change a password. Today an admin can only delete and re-create an account, which unlinks it.
+   - Bulk account creation with automatic linking to the person. Linking 50 logins one dropdown at a time is tedious.
+   - Remove and rename people. Deleting needs a decision about their attendance rows and about the login linked to them.
+     (Backup restore with --replace is the current workaround.)
 
-3. Split Partial Day into AM and PM (after the tests, because it changes the database constraint)
+3. Multi-admin safety
+   With 10 admins, two will eventually edit the same day, and the last save silently wins.
+   - Record who changed or removed each record, and when. Admins will ask "who un-recorded Ben?".
+   - Stop the last admin from being deleted or demoted.
+   - Let the board refresh, or warn when it is stale.
+
+4. The AM/PM split, before you go live
+   It rebuilds a table, and that is much safer before real data exists than after.
    Start at STATUSES (attendanceUtils.js) and ALLOWED_STATUSES (app.py). The status CHECK constraint in users.py (0, 1, 2) means
-   a table rebuild, and the ML status mapping, backup.py (allowed statuses) and the CSV import need updating too.
+   a table rebuild (test_schema.py has the constraint tests to update), and the ML status mapping, backup.py (allowed statuses)
+   and the CSV import need updating too.
 
-4. Move settings that differ per machine into .env (after 1-3, so the tests exist to catch mistakes)
-   What moves (backend/.env):  CORS_ORIGIN (now hard-coded http://localhost:5173), TIMEZONE_OFFSET_HOURS (8), SELF_SERVICE_CUTOFF
-   ("08:15"), DEPARTMENTS (comma-separated) and DEFAULT_DEPARTMENT (Holding). SECRET_KEY, DATABASE_URL and ENV are already
-   environment variables, they just have no .env file to live in yet.
-   What moves (frontend/.env):  VITE_API_URL (now SERVER_URL in App.jsx, http://localhost:5000). Vite only exposes names that start
-   with VITE_, reads the file when the dev server starts (restart it after editing) and bakes the value in at build time.
-   What does NOT move: STATUSES, ALLOWED_STATUSES and the status CHECK constraint. They have to change together (AM/PM split),
-   so a .env entry would let them drift apart. The seed CSV's expected column names (GOOD_HEADERS, in your import_csv.py) describe
-   a file format, not a setting; leave them in code unless you have a reason.
-   How, so that it works:
-     a. pip install python-dotenv (it is not installed yet; .env is already in .gitignore but nothing reads it). Add it to
-        requirements.txt when that exists.
-     b. Load it from backend/.env by path (Path(__file__).parent / ".env"), not the current directory, the same way the database
-        path is resolved. Use load_dotenv(override=False) so a real environment variable still wins.
-     c. Read the values inside create_app, not at import time, and give each a default equal to today's constant, so the app
-        behaves the same with no .env at all.
-     d. Validate at startup and fail with a clear message: offset is an integer from -12 to 14, cutoff matches HH:MM, the
-        department list is not empty, the default department is in the list. A typo should stop the server, not shift the cutoff.
-     e. Tests must not read your own .env: have conftest.py set the values explicitly (or pass a config dict to create_app),
-        otherwise a local TIMEZONE_OFFSET_HOURS would break the fixed-clock tests.
-     f. Commit backend/.env.example and frontend/.env.example with the default values and a comment on each; the real .env files
-        stay ignored. Add the variables to the README's Configuration and Environment variables tables (the Configuration table
-        then stops saying "plain constants").
-   Check that it works: delete .env and confirm the app behaves as before; set a different cutoff, restart, and confirm
-   the seconds left to the cutoff in GET /api/me/attendance change accordingly; set a bad value and confirm the server refuses to start; run pytest with a
-   .env present and with none.
-   Note: a changed department list does not rewrite existing people (someone keeps a removed department until an admin changes it).
-   Longer term, departments are data rather than settings; a department table managed from the admin screen would replace the
-   env list.
+5. Deployment prep
+   The .env settings, gunicorn, a Dockerfile, HTTPS, SQLite WAL mode and a scheduled backup.
+   - Before running several gunicorn workers, make the model-cache write atomic. Two workers retraining at once can leave a
+     half-written models.joblib.
+   - .env, backend (backend/.env):  CORS_ORIGIN (now hard-coded http://localhost:5173), TIMEZONE_OFFSET_HOURS (8),
+     SELF_SERVICE_CUTOFF ("08:15"), DEPARTMENTS (comma-separated) and DEFAULT_DEPARTMENT (Holding). SECRET_KEY, DATABASE_URL and
+     ENV are already environment variables, they just have no .env file to live in yet.
+   - .env, frontend (frontend/.env):  VITE_API_URL (now SERVER_URL in App.jsx, http://localhost:5000). Vite only exposes names that
+     start with VITE_, reads the file when the dev server starts (restart it after editing) and bakes the value in at build time.
+   - What does NOT move: STATUSES, ALLOWED_STATUSES and the status CHECK constraint. They have to change together, so a .env entry
+     would let them drift apart. The seed CSV's expected column names (GOOD_HEADERS, in your import_csv.py) describe a file
+     format, not a setting; leave them in code unless you have a reason.
+   - How, so that it works:
+       a. pip install python-dotenv (not installed yet; .env is already in .gitignore but nothing reads it). Add it to
+          requirements.txt.
+       b. Load it from backend/.env by path (Path(__file__).parent / ".env"), not the current directory, the same way the database
+          path is resolved. Use load_dotenv(override=False) so a real environment variable still wins.
+       c. Read the values inside create_app, not at import time, and give each a default equal to today's constant, so the app
+          behaves the same with no .env at all.
+       d. Validate at startup and fail with a clear message: offset is an integer from -12 to 14, cutoff matches HH:MM, the
+          department list is not empty, the default department is in the list. A typo should stop the server, not shift the cutoff.
+       e. Tests must not read your own .env: have conftest.py set the values explicitly (or pass a config dict to create_app),
+          otherwise a local TIMEZONE_OFFSET_HOURS would break the fixed-clock tests.
+       f. Commit backend/.env.example and frontend/.env.example with the default values and a comment on each; the real .env files
+          stay ignored. Add the variables to the README's Configuration and Environment variables tables.
+   - Check that it works: delete .env and confirm the app behaves as before; set a different cutoff, restart, and confirm the
+     seconds left to the cutoff in GET /api/me/attendance change accordingly; set a bad value and confirm the server refuses to
+     start; run pytest with a .env present and with none.
+   - Not on the internet until items 1 and 2 are done: the CORS origin and SERVER_URL are hard-coded to localhost, and there is no
+     CSRF protection or rate limiting.
 
-5. Close open registration, now that admins can create accounts. (hopefully make admin account creation a 2FA process)
-   If registration stays for a while: an optional department request (default Holding) that an admin confirms. Do not create
-   a person at sign-up.
+6. Frontend tests and CI
+   These come last because the backend tests already protect the rules that matter most.
+   - Component tests with Vitest + jsdom: the un-record warning, the tally, the cutoff lock on the user page, the People section.
+   - A few browser flows with Playwright: drag and drop (mouse and touch), un-record with the warning, the three admin sections,
+     the phone layout.
+   - A GitHub Actions workflow that runs pytest and the frontend build on every push.
 
-6. Add a way to remove or rename a person. You can add them now but can't delete them, and deleting needs a decision about
-   their attendance rows (and about the login linked to them). Backup restore with --replace is the current workaround.
-
-
-Later
-Flask-Migrate, so schema changes stop needing manual SQL (person.department and user.person_id are only added by small startup ALTERs).
-Tie debug=True to ENV (python app.py currently always runs the development server in debug mode).
-Make response shapes consistent, since some include code and others don't.
-Split create_app into blueprints.
-Fix the login timing leak.
-Write the model cache atomically (only matters with several workers).
-Make /api/predict use the UTC+8 date instead of the server's date.
-Hide or warn about head-counts for departments of one or two people (they identify the person).
-requirements.txt / lockfile for the Python dependencies (pytest is a dev-only dependency).
-Optional Vite proxy so the API and UI share one origin in dev (this would also make the CORS setting unnecessary in dev).
-Include logins and links in the backup (as an admin-only export without password hashes) if rebuilding them by hand gets tedious.
-
-
-Housekeeping (small, do before the repo is made public)
-Rename frontend/src/AttendanceUtils.js to attendanceUtils.js (the imports use the lowercase name; case matters on Linux, macOS and CI).
-Delete the untracked package.json and package-lock.json at the repo root if they only contain @dnd-kit/core. The real ones are in frontend/.
-Add to .gitignore: attendance-backup-*.csv, backup*.csv (backups contain real names), .pytest_cache/, frontend/dist/. The
-backend/instance/ line is listed twice.
-Decide the license. The README says "All rights reserved" and also "When public, GPL v3.0", which contradict each other.
-Add a screenshot to the README (e.g. docs/screenshot.png); retake it after the search/filter step changes the layout.
-Create backend/admin.py only if admin routes are split out of app.py; otherwise drop it from the README layout.
+7. Housekeeping and naming tidy-ups (small; do these before the repo is made public)
+   - Keep the file name AttendanceUtils.js, and make every import agree with it. Today the imports say './attendanceUtils' (in
+     AttendanceTally.jsx, BackupSection.jsx, MyAttendance.jsx, PeopleSection.jsx, DailyAttendance.jsx), which only works because
+     Windows ignores case. On Linux, macOS, Docker and CI it fails with "module not found". Change them to './AttendanceUtils',
+     and update the README (layout, troubleshooting) and this file to the same spelling.
+   - Change every "Not recorded" to "Not Recorded": the tray title in DailyAttendance.jsx, the tally label in AttendanceTally.jsx,
+     "Not recorded yet" in MyAttendance.jsx, the comments in DailyAttendance.jsx, DailyAttendance.css and app.py, and the README and
+     this file. Anything that checks the old text (the tally string "Not recorded 1", browser checks) changes with it.
+   - Delete the untracked package.json and package-lock.json at the repo root if they only contain @dnd-kit/core. The real ones
+     are in frontend/.
+   - Add to .gitignore: attendance-backup-*.csv, backup*.csv (backups contain real names), .pytest_cache/, frontend/dist/. The
+     backend/instance/ line is listed twice.
+   - App.jsx lines 3-4 are import './AttendanceForm' and import './UserManagement' with no file extension and nothing imported.
+     They look like they were meant to be the .css files; the components already import their own CSS, so delete both lines or
+     fix them.
+   - Decide the license. The README says "All rights reserved" and also "When public, GPL v3.0", which contradict each other.
+   - Add a screenshot to the README (e.g. docs/screenshot.png), taken after the search and filter step changes the layout.
+   - Create backend/admin.py only if admin routes are split out of app.py; otherwise drop it from the README layout.
