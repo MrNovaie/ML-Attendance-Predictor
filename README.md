@@ -12,7 +12,7 @@ A small full-stack app that tracks weekday attendance and predicts it from histo
 - **Model evaluation** (80/20 holdout accuracy vs a simple baseline), admin only
 - **Today's Attendance page** — switch to it with the button fixed at the bottom left (admins; everyone else lands on it)
   - **Admins:** a drag-and-drop board (In / Partial Day / Out, plus a *Not Recorded* tray) with a department filter, a name search and a blue **Save** button. Works with mouse, touch (press and hold briefly, then drag) and keyboard. Dragging a saved name back to *Not Recorded* and saving **un-records** it, after a warning that offers to download a backup first.
-  - **Everyone else:** their own status, three buttons to change it until the daily cutoff (08:15 UTC+8), and a head-count with no names.
+  - **Everyone else:** their own status, three buttons to change it until the daily cutoff (08:15 UTC+8), and a head-count with no names (only while the login is linked to a person).
   - **Tally** at the bottom right: individual statuses `In, Partial Day, Out`, with total on a second, larger line.
 - **Departments** — each person belongs to one (a dropdown; blank means *Holding*)
 - **Login ↔ person link** — an admin links each account to the person it belongs to, which is what lets that user set their own attendance
@@ -23,10 +23,10 @@ A small full-stack app that tracks weekday attendance and predicts it from histo
   - Open sign-up is **off by default**; when switched on, it can carry an optional department request that an admin confirms
 - **Backup and restore** — download everyone and all attendance as one CSV (admin), and load it back with a command
 - **In-app attendance entry** for any past weekday — record or correct each person's status (admin)
-- **Add people** from the UI, with a department (admin)
+- **People** — add someone with a department, rename them, remove them (they become a *former* person: their attendance is kept, they leave the board, predictions and head-counts, and their login is unlinked but kept), and restore them later (admin)
 - **User management** — list, add, reset the password of, and remove accounts (admin)
 - **SQLite storage** — the database is the source of truth; a CSV can optionally seed it on first run
-- **Automated checks** — 362 backend tests, and a GitHub Actions workflow that runs them and the frontend build on every push
+- **Automated checks** — 415 backend tests, and a GitHub Actions workflow that runs them and the frontend build on every push
 
 ## Stack
 
@@ -55,12 +55,13 @@ attendance_tracker_app/
 │   ├── pytest.ini           # makes `pytest` find the backend modules
 │   ├── tests/
 │   │   ├── conftest.py              # fresh database, model cache and fixed clock for every test
-│   │   ├── test_perms.py      # who may call every route (a route missing from the table fails the suite)
+│   │   ├── test_perms.py            # who may call every route (a route missing from the table fails the suite)
 │   │   ├── test_auth.py             # login, logout, sign-up (closed by default), account management
 │   │   ├── test_accs.py         # change / reset password, forced change, bulk logins, department requests
 │   │   ├── test_attendance.py       # admin entry, un-record, model-cache clearing
 │   │   ├── test_selfserve.py     # the 08:15 cutoff and the UTC+8 clock
 │   │   ├── test_pplNlinks.py # people, departments, login links
+│   │   ├── test_former.py    # removing, restoring and renaming people
 │   │   ├── test_summary.py          # the head-count
 │   │   ├── test_preds.py          # predictions and evaluation
 │   │   ├── test_schema.py           # database rules and startup migrations
@@ -80,7 +81,7 @@ attendance_tracker_app/
 │       ├── AttendanceTally.jsx   # The bottom-right tally box
 │       ├── AttendanceUtils.js    # STATUSES list, date helpers, shared fetch/error helpers, CSV and backup download
 │       ├── AttendanceForm.jsx    # Admin section "Record attendance"
-│       ├── PeopleSection.jsx     # Admin section "People": add a person, departments and logins
+│       ├── PeopleSection.jsx     # Admin section "People": add, rename, remove, restore, departments and logins
 │       ├── AccountsSection.jsx   # Admin section "Accounts": bulk logins, sign-up department requests
 │       ├── BackupSection.jsx     # Admin section "Backup"
 │       ├── UserManagement.jsx    # "Manage users": list / add / reset password / remove (admin)
@@ -137,10 +138,11 @@ On start the app will:
 1. Create any missing tables (`user`, `person`, `attendance_record`)
 2. Rebuild `person` / `attendance_record` **if they are from an old schema** (see [Known limitations](#known-limitations) — this drops them, so keep a backup)
 3. Add `person.department` (default *Holding*) if the column is missing, and fill in blanks
-4. Add `user.person_id` and its unique index if the column is missing (existing logins stay unlinked until an admin links them)
-5. Add `user.must_change_password` and `user.requested_department` if they are missing (existing logins keep their passwords and are not forced to change them)
-6. Seed from `data/attendance.csv` **only if** the database has no people or attendance yet and the file exists. Otherwise the import is skipped.
-7. Listen on **http://localhost:5000**
+4. Add `person.former` if it is missing (everyone already there stays active)
+5. Add `user.person_id` and its unique index if the column is missing (existing logins stay unlinked until an admin links them)
+6. Add `user.must_change_password` and `user.requested_department` if they are missing (existing logins keep their passwords and are not forced to change them)
+7. Seed from `data/attendance.csv` **only if** the database has no people or attendance yet and the file exists. Otherwise the import is skipped.
+8. Listen on **http://localhost:5000**
 
 Generated locally (do not commit): `attendance.db`, `models.joblib`.
 
@@ -211,7 +213,7 @@ The database is the only copy of attendance, and un-recording deletes permanentl
 - In the app (admin): **Backup → Download backup (CSV)**. The un-record warning also has a **Download backup first** button.
 - From `backend/`: `flask --app app export-backup backup.csv`
 
-**File format:** one header row `person,department,date,status`, then one row per record, e.g. `Ana,Finance,2026-10-12,1`. Dates are ISO, so history can span any number of years. Status is `0` Out, `1` In, `2` Partial Day. A person with no records gets one row with an empty date and status, so the roster is kept. The file is UTF-8 with a byte-order mark so Excel opens it correctly. **Logins and their links are not included** (no password hashes in a spreadsheet); after a restore, create the logins again (**Accounts → Create logins for people** links each one to its person) or link existing ones under **People**.
+**File format:** one header row `person,department,date,status,former`, then one row per record, e.g. `Ana,Finance,2026-10-12,1,0`. Dates are ISO, so history can span any number of years. Status is `0` Out, `1` In, `2` Partial Day. `former` is `1` for a person an admin has removed, otherwise `0`; the column is optional when loading, so a backup made before it existed restores everyone as active. A person with no records gets one row with an empty date and status, so the roster is kept. The file is UTF-8 with a byte-order mark so Excel opens it correctly. **Logins and their links are not included** (no password hashes in a spreadsheet); after a restore, create the logins again (**Accounts → Create logins for people** links each one to its person) or link existing ones under **People**.
 
 **Restore** (from `backend/`):
 
@@ -254,10 +256,10 @@ The page always shows **today** in the office timezone (UTC+8), never a date pic
 ### Users
 
 - **Link first.** A login only gets a status of its own after an admin links it: **People → Departments and logins → Login linked to {name}**. One login per person and one person per login. The list only offers logins that are not linked yet (plus that person's current one). Logins made with **Accounts → Create logins for people** are linked as they are created.
-- An account that is not linked (one added under **Manage users**, or a sign-up) can use the page but sees `Your account isn't linked to a person yet…` and no buttons. Linking is admin-only on purpose, so nobody can claim someone else's attendance.
+- An account that is not linked (one added under **Manage users**, a sign-up, or the login of someone who was removed) can use the page but sees `Your account isn't linked to a person…`, no buttons and **no head-count**: the server answers `403` to the head-count for a login with no person behind it. Linking is admin-only on purpose, so nobody can claim someone else's attendance.
 - A linked user sees their name and department, **In / Partial Day / Out** buttons, and the current status.
 - Changes are allowed **on weekdays until 08:15 (UTC+8)**. The window resets by itself every day, and the buttons lock on their own when it passes. After the cutoff only an admin can change an entry. Before it, a user can overwrite an entry an admin made for them.
-- The tally on this page shows counts only, never names. It defaults to the user's own department, can be switched, and refreshes about every 30 seconds.
+- The tally on this page (for linked users) shows counts only, never names. It defaults to the user's own department, can be switched, and refreshes about every 30 seconds.
 
 ## Accounts and passwords
 
@@ -296,17 +298,17 @@ All endpoints except register, login and auth options need an authenticated sess
 | POST | `/api/me/password` | User | Change own password: `{current_password, new_password}`. Ends the user's other sessions † |
 | GET | `/api/predict?date=YYYY-MM-DD` | **Admin** | Predictions for a date |
 | GET | `/api/evaluate` | **Admin** | Holdout accuracy per person |
-| GET | `/api/people` | **Admin** | People as `[{id, name, department, user_id}]` (`user_id` is the linked login) |
+| GET | `/api/people` | **Admin** | People as `[{id, name, department, former, user_id}]` (`user_id` is the linked login). Former people are left out unless `?include_former=1` |
 | GET | `/api/departments` | User | `{departments, default}` — the allowed choices |
 | GET | `/api/today` | User | `{date, weekend, timezone}` — today in the office timezone |
 | GET | `/api/attendance?date=YYYY-MM-DD` | Admin | Recorded statuses for a date |
 | PUT | `/api/attendance` | Admin | Upsert or remove statuses: `{date, records: [{person_id, status}]}` |
-| GET | `/api/attendance/summary?department=` | User | Today's head-counts, no names: `{by_status, not_recorded, total}` |
+| GET | `/api/attendance/summary?department=` | Admin or linked login | Today's head-counts, no names, former people left out: `{by_status, not_recorded, total}`. `403` for a login with no person |
 | GET | `/api/me/attendance` | User | Own status for today, whether it can be edited, seconds left to the cutoff, link state |
 | PUT | `/api/me/attendance` | User | Set own status for today: `{status}` |
 | GET | `/api/export/attendance.csv` | Admin | The backup file (people, departments, all records); sent as a download, never cached |
-| POST | `/api/table_persons` | Admin | Add a person: `{name, department?}` |
-| PATCH | `/api/people/<id>` | Admin | Change `{department?, user_id?}` — `user_id` links a login (or `null` unlinks) |
+| POST | `/api/table_persons` | Admin | Add a person: `{name, department?}`. A name held by a former person answers `409` (restore them instead) |
+| PATCH | `/api/people/<id>` | Admin | Change `{name?, department?, user_id?, former?}`. `user_id` links a login (or `null` unlinks); `former: true` removes the person (their login is unlinked and kept, `unlinked_username` says which), `former: false` restores them. A former person cannot be linked. All or nothing |
 | GET | `/api/users` | Admin | List accounts (`person_id`, `must_change_password`, `requested_department`) |
 | POST | `/api/users` | Admin | Create an account: `{username, password, is_admin?, must_change_password?}` (the last defaults to `true`) |
 | POST | `/api/users/bulk` | Admin | One linked login per person: `{person_ids}` (up to 200). Returns `{created: [{person_id, person, username, temporary_password}]}` once. All or nothing |
@@ -314,11 +316,11 @@ All endpoints except register, login and auth options need an authenticated sess
 | POST | `/api/users/<id>/department-request` | Admin | Answer a sign-up department request: `{action: "confirm" \| "dismiss"}` |
 | DELETE | `/api/users/<id>` | Admin | Remove an account (cannot remove ownself) |
 
-**Recording rules for `PUT /api/attendance`:** weekdays only, not in the future (judged in UTC+8), each `person_id` must exist and appear once, and the request is all-or-nothing. Every record needs a `status` key: `0`, `1` or `2` (integers only), or `null` to **remove** that person's record for the day. The response is `{status, date, saved, removed}`. Removing anything clears the model cache (see below).
+**Recording rules for `PUT /api/attendance`:** weekdays only, not in the future (judged in UTC+8), each `person_id` must exist, belong to a current (not former) person and appear once, and the request is all-or-nothing. Every record needs a `status` key: `0`, `1` or `2` (integers only), or `null` to **remove** that person's record for the day. The response is `{status, date, saved, removed}`. Removing anything clears the model cache (see below).
 
 **Rules for `PUT /api/me/attendance`:** the person is taken from the account's admin-made link, never from the request. `status` must be `0`, `1` or `2`. It returns `403` for an unlinked account or after the cutoff, and `400` on a weekend.
 
-The UI hides the admin sections and the Predictions page from non-admins, but the server enforces the admin check on every admin endpoint (`tests/test_permissions.py` lists every route and fails if one is missing).
+The UI hides the admin sections and the Predictions page from non-admins, but the server enforces the admin check on every admin endpoint (`tests/test_perms.py` lists every route and fails if one is missing).
 
 ## Environment variables
 
@@ -349,7 +351,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Each test gets its own empty SQLite file, its own model cache and a fixed clock, so it never touches `attendance.db`. 362 tests cover: the permission of every route (a new route that is not listed fails the suite), logins and accounts (sign-up closed by default, change and reset password, the forced password change on every route, bulk logins, department requests), attendance entry and un-record with model-cache clearing, the 08:15 cutoff and UTC+8 clock at their edges, people and login links, the tally, predictions (admin only), database constraints and startup migrations, and backup/restore. They were also checked by breaking the code on purpose (21 deliberate bugs in the attendance code and 6 in the account code); every one was caught.
+Each test gets its own empty SQLite file, its own model cache and a fixed clock, so it never touches `attendance.db`. 415 tests cover: the permission of every route (a new route that is not listed fails the suite), logins and accounts (sign-up closed by default, change and reset password, the forced password change on every route, bulk logins, department requests), attendance entry and un-record with model-cache clearing, the 08:15 cutoff and UTC+8 clock at their edges, people and login links, removing, restoring and renaming people, the tally, predictions (admin only), database constraints and startup migrations, and backup/restore. They were also checked by breaking the code on purpose (21 deliberate bugs in the attendance code, 6 in the account code and 17 in the remove / rename code); every one was caught.
 
 **CI:** `.github/workflows/ci.yml` runs `pytest` (Python 3.13) and `npm ci` + `npm run build` (Node 22) on every push and pull request.
 
@@ -393,7 +395,8 @@ A `401` means the session is not logged in at all (for example a failed login), 
 - **`HTTP 404` on Today's Attendance** means the running backend does not have the newer routes (`/api/today`, `/api/me/attendance`, `/api/attendance/summary`). Replace `app.py` and restart the backend; check the failing URL in the browser's Network tab.
 - **`import-backup` says "The backup file has problems"** and lists lines. Fix those lines and run it again; nothing was written. The most common causes are a date that Excel reformatted (it must be `YYYY-MM-DD`) and a weekend date.
 - **`import-backup` says the database already has people or attendance.** That is the safety check. Use `--replace` only if you really want to delete what is there.
-- **`no such column: ...`** means the existing database predates a schema change. `db.create_all()` never alters existing tables — back up the file, then add the column manually or rebuild the table. (`person.department`, `user.person_id`, `user.must_change_password` and `user.requested_department` are added automatically at startup.)
+- **`no such column: ...`** means the existing database predates a schema change. `db.create_all()` never alters existing tables — back up the file, then add the column manually or rebuild the table. (`person.department`, `person.former`, `user.person_id`, `user.must_change_password` and `user.requested_department` are added automatically at startup, but only when you start with `python app.py`.)
+- **CI fails with "Some specified paths were not resolved, unable to cache dependencies".** `frontend/package-lock.json` is missing from the commit (it was deleted or never committed). Run `npm install` in `frontend/` and commit the new lockfile; `npm ci` in CI needs it.
 - **A blank page** in the browser is usually a JavaScript error. Check the DevTools console. Hooks (`useState` etc.) must be called inside a component.
 - **An import fails with a missing `./AttendanceUtils`:** the file must be named exactly `AttendanceUtils.js` (capital `A`) and every import must spell it the same way. Windows ignores filename case, but Linux, macOS and CI do not. If git still tracks the old spelling after a rename on Windows, rename it with `git mv` through a temporary name.
 - **"Your account isn't linked to a person yet"** is expected for a new login. An admin links it under **People → Departments and logins**.
@@ -408,7 +411,7 @@ A `401` means the session is not logged in at all (for example a failed login), 
 - **Un-recording is a permanent delete.** The app warns first and can download a backup, but nothing is backed up automatically. Backups do not include logins or their person links.
 - **The stale-schema rebuild drops `person` and `attendance_record`** when the attendance table is missing expected columns. Back up before upgrading an old database.
 - **No Alembic migrations.** Startup adds the columns listed under *Setup* itself, but any other schema change needs manual SQL or a rebuild.
-- **People can be added but not removed or renamed** from the UI. Deleting a login simply unlinks it; person deletion is not available.
+- **People are never deleted.** *Remove* makes someone a former person (kept in the database, the backup and the Former people list). Their name stays reserved, so a new person cannot reuse it; restore them or rename them first. Deleting a login simply unlinks it.
 - **Passwords are reset by an admin only** (there is no email or self-service "forgot password"). Temporary passwords are shown once; if one is lost, reset it again.
 - **Only three statuses (0 / 1 / 2).** They are fixed by a database `CHECK` constraint, so splitting Partial Day into AM and PM needs a table rebuild (see Roadmap).
 - **Small departments:** a head-count for a department of one or two people effectively identifies them.
@@ -418,9 +421,8 @@ A `401` means the session is not logged in at all (for example a failed login), 
 
 ## Roadmap
 
-The plan is the TO DO list in `todo.txt`. When all eight items are done, the project is finished. Done so far: 1 (CI), 2 (admin-only Predictions, search and department filter) and the first half of 3.
+The plan is the TO DO list in `todo.txt`. When all eight items are done, the project is finished. Done so far: 1 (CI), 2 (admin-only Predictions, search and department filter) and 3 (account management, remove / rename / restore people). Left: 4 to 8.
 
-- **3, second half — Remove and rename people.** Needs decisions on what happens to their attendance rows and to the login linked to them.
 - **4 — Multi-admin safety and the activity log.** Every admin change recorded, readable in the app and attributed to the admin (who, when in UTC+8, what, on whom, old and new value), append-only and downloadable; stop the last admin being deleted or demoted; refresh or warn when the board is stale.
 - **5 — Split Partial Day into AM and PM**, before real data exists (start at `STATUSES` in `AttendanceUtils.js` and `ALLOWED_STATUSES` in `app.py`; then the `CHECK` constraint, the ML status mapping, the backup restore and the CSV import).
 - **6 — Deployment prep.** `.env` settings (CORS origin, timezone offset, cutoff, departments), gunicorn, a Dockerfile, HTTPS, SQLite WAL mode, a scheduled backup that includes the log; CSRF protection and login rate limiting (droppable only on a private network or VPN); an atomic model-cache write; optionally 2FA for creating admin accounts.
@@ -430,7 +432,7 @@ The plan is the TO DO list in `todo.txt`. When all eight items are done, the pro
 Later, if ever: Flask-Migrate for schema changes; a Vite proxy so API and UI share one origin in development; consistent response shapes and `create_app` split into blueprints; making `/api/predict` use the UTC+8 date.
 
 ## Version history
-- **v0.6** (in progress) — CI (GitHub Actions: pytest and the frontend build) and `requirements.txt`. Predictions, accuracy and the people list are admin-only; department filter and name search beside the date picker (icon buttons on phones) and on the board. Account management: sign-up off by default (optional department request an admin confirms), bulk creation of linked logins with one-time temporary passwords and a CSV, forced password change for temporary passwords (enforced by the server), change password, admin reset password, `set-password` command, sessions ended by a password change. Backend tests grew from 31 to 362. New endpoints: `/api/auth/options`, `/api/me/password`, `/api/users/bulk`, `/api/users/<id>/password`, `/api/users/<id>/department-request`.
+- **v0.6** (in progress) — CI (GitHub Actions: pytest and the frontend build) and `requirements.txt`. Predictions, accuracy and the people list are admin-only; department filter and name search beside the date picker (icon buttons on phones) and on the board. Account management: sign-up off by default (optional department request an admin confirms), bulk creation of linked logins with one-time temporary passwords and a CSV, forced password change for temporary passwords (enforced by the server), change password, admin reset password, `set-password` command, sessions ended by a password change. Remove, rename and restore people: a removed person becomes *former* (history kept, login unlinked but kept, left out of the board, predictions, head-counts and new logins) and can be restored from the Former people list; the head-count is for admins and linked logins only; the backup carries a `former` column. Backend tests grew from 31 to 415. New endpoints: `/api/auth/options`, `/api/me/password`, `/api/users/bulk`, `/api/users/<id>/password`, `/api/users/<id>/department-request`; `PATCH /api/people/<id>` now also takes `name` and `former`.
 - **v0.5** — Backup and restore: admin download of everyone and all attendance as one CSV, export-backup / import-backup commands with whole-file validation. A warning (with Download backup first) before Save deletes records. The admin screen split into separate Record attendance, People and Backup sections. The backend test suite (pytest).
 - **v0.4** — Un-record attendance (drag back to *Not Recorded*, plus forced model retrain). Self-service: users set their own status until 08:15 UTC+8, enforced by the server. Login ↔ person link, managed by admins. Tally with total at the bottom right (admin and user pages). Office clock fixed to UTC+8. `GET /api/attendance` and `PUT /api/attendance` are admin-only. New endpoints: `/api/today`, `/api/me/attendance`, `/api/attendance/summary`; `PATCH /api/people/<id>` now links logins.
 - **v0.3** — Today's Attendance page with a bottom-left toggle, department dropdown, drag-and-drop columns with a *Not Recorded* tray, and a blue Save button (mouse, touch, keyboard). Departments (dropdown, default *Holding*, NOT NULL). Predictions refresh after attendance is saved.
