@@ -154,6 +154,20 @@ def ensure_person_department() -> None:
         )
 
 
+def ensure_person_former() -> None:
+    """Add person.former to a database created before it existed. Everyone already there stays active."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(db.engine)
+    if not inspector.has_table("person"):
+        return
+    if "former" in {c["name"] for c in inspector.get_columns("person")}:
+        return
+    logger.warning("person.former is missing. Adding the column.")
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE person ADD COLUMN former BOOLEAN NOT NULL DEFAULT 0"))
+
+
 def ensure_user_person_link() -> None:
     """Add user.person_id (which person a login belongs to) to a database created before it existed.
 
@@ -345,7 +359,7 @@ def create_app() -> Flask:
         username = body.get("username")
         password = body.get("password")
         confirmPassword = body.get("confirmPassword")
-        if not isinstance(username, str) or not username or not password or not confirmPassword:
+        if not isinstance(username, str) or not username.strip() or not password or not confirmPassword:
             return jsonify(code=400, error="Username and password are required"), 400
         username = username.strip()
         if len(username) > 80:
@@ -412,6 +426,8 @@ def create_app() -> Flask:
             return jsonify(code=500, error="Internal server error"), 500
         login_user(user)  # new session id (the password is part of it); every other browser is logged out
         return jsonify(code=200, status="success", message="Password changed")
+
+
     '''Admin Commands'''
     @app.get("/api/predict")
     @login_required
@@ -447,13 +463,17 @@ def create_app() -> Flask:
     @admin_required
     def people():
         # Admin-only: the list holds everyone's name and department, and which login belongs to whom.
-        rows = Person.query.order_by(Person.id).all()
-        result = [{"id": p.id, "name": p.name, "department": department_of(p)} for p in rows]
+        # Former people are left out unless ?include_former=1, so no screen shows them by accident.
+        query = Person.query
+        if request.args.get("include_former") != "1":
+            query = query.filter(Person.former.is_(False))
+        rows = query.order_by(Person.id).all()
+        result = [{"id": p.id, "name": p.name, "department": department_of(p), "former": bool(p.former)}
+                  for p in rows]
         logins = {u.person_id: u.id for u in User.query.filter(User.person_id.isnot(None))}
         for entry in result:
             entry["user_id"] = logins.get(entry["id"])
         return jsonify(result)
-    
     @app.cli.command("create-admin")
     @click.argument("username")
     @click.password_option()
@@ -581,6 +601,9 @@ def create_app() -> Flask:
         missing = [i for i in ids if i not in people]
         if missing:
             return jsonify(code=404, error=f"Person not found: {', '.join(map(str, missing))}."), 404
+        former = sorted(p.name for p in people.values() if p.former)
+        if former:
+            return jsonify(code=409, error=f"These are former people and cannot have a login: {', '.join(former)}."), 409
         linked = {u.person_id for u in User.query.filter(User.person_id.in_(ids))}
         if linked:
             names = ", ".join(sorted(people[i].name for i in linked))
@@ -669,8 +692,13 @@ def create_app() -> Flask:
         name = (body.get("name") or "").strip()
         if not name:
             return jsonify(error="Name is required"), 400
-        if Person.query.filter_by(name=name).first():
+        existing = Person.query.filter_by(name=name).first()
+        if existing is not None:
+            if existing.former:
+                return jsonify(error=f"{name} is a former person. Restore them instead of adding them again."), 409
             return jsonify(error="Person already exists"), 409
+        if len(name) > Person.name.type.length:
+            return jsonify(error=f"Name must be at most {Person.name.type.length} characters."), 400
         department, error = clean_department(body.get("department"))
         if error:
             return jsonify(error=error), 400
@@ -685,23 +713,45 @@ def create_app() -> Flask:
             db.session.rollback()
             logger.exception("Failed to create person: %s", name)
             return jsonify(error="Internal server error"), 500
-        return jsonify(id=person.id, name=person.name, department=person.department), 201
+        return jsonify(id=person.id, name=person.name, department=person.department, former=False), 201
 
     @app.patch("/api/people/<int:person_id>")
     @login_required
     @admin_required
     def update_person(person_id: int):
+        """Change a person's name, department, linked login, or whether they are a former person.
+
+        Removing someone is {"former": true}: they and their attendance stay in the database, their login is
+        unlinked (the login itself is kept), and they drop out of the board, predictions and head-counts.
+        {"former": false} brings them back; their login is not re-linked automatically.
+        """
         person = db.session.get(Person, person_id)
         if person is None:
             return jsonify(error="Person not found"), 404
         body = request.get_json(silent=True) or {}
-        if "department" not in body and "user_id" not in body:
+        if not any(key in body for key in ("department", "user_id", "name", "former")):
             return jsonify(error="Nothing to update."), 400
 
         if "department" in body:
             department, error = clean_department(body["department"])
             if error:
                 return jsonify(error=error), 400
+
+        new_name = None
+        if "name" in body:
+            new_name = body["name"].strip() if isinstance(body["name"], str) else ""
+            if not new_name:
+                return jsonify(error="Name is required"), 400
+            if len(new_name) > Person.name.type.length:
+                return jsonify(error=f"Name must be at most {Person.name.type.length} characters."), 400
+            clash = Person.query.filter(Person.name == new_name, Person.id != person.id).first()
+            if clash is not None:
+                kind = "A former person" if clash.former else "Someone"
+                return jsonify(error=f"{kind} is already called {new_name}."), 409
+
+        if "former" in body and type(body["former"]) is not bool:
+            return jsonify(error="former must be true or false."), 400
+        will_be_former = body["former"] if "former" in body else bool(person.former)
 
         new_login = None
         if "user_id" in body:
@@ -710,13 +760,27 @@ def create_app() -> Flask:
                 # type() so that true/false are not accepted as 1/0
                 if type(user_id) is not int:
                     return jsonify(error="user_id must be an integer or null."), 400
+                if will_be_former:
+                    return jsonify(error="A former person cannot have a login linked. Restore them first."), 409
                 new_login = db.session.get(User, user_id)
                 if new_login is None:
                     return jsonify(error="User not found"), 404
 
+        was_former = bool(person.former)
+        renamed = new_name is not None and new_name != person.name
+        unlinked_username = None
         try:
             if "department" in body:
                 person.department = department
+            if renamed:
+                person.name = new_name
+            if will_be_former != was_former:
+                person.former = will_be_former
+                if will_be_former:
+                    # Removing someone also unlinks their login; the login itself stays.
+                    for old in User.query.filter(User.person_id == person.id):
+                        old.person_id = None
+                        unlinked_username = old.username
             if "user_id" in body:
                 # One login per person: whoever was linked before is unlinked first.
                 for old in User.query.filter(User.person_id == person.id):
@@ -726,13 +790,24 @@ def create_app() -> Flask:
                 if new_login is not None:
                     new_login.person_id = person.id  # moves them off any other person
             db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(error="Someone else changed the people at the same time. Try again."), 409
         except Exception:
             db.session.rollback()
             logger.exception("Failed to update person id=%s", person_id)
             return jsonify(error="Internal server error"), 500
+
+        if renamed or will_be_former != was_former:
+            # The models are keyed by name and trained only on active people; neither change touches updated_at.
+            try:
+                invalidate_models()
+            except OSError:
+                logger.exception("Person %s was changed but the model cache could not be cleared", person_id)
         linked = User.query.filter_by(person_id=person.id).first()
         return jsonify(id=person.id, name=person.name, department=person.department,
-                       user_id=linked.id if linked else None)
+                       user_id=linked.id if linked else None, former=bool(person.former),
+                       unlinked_username=unlinked_username)
 
     '''Updating or changing attendance'''
     ALLOWED_STATUSES = {0, 1, 2}
@@ -766,16 +841,20 @@ def create_app() -> Flask:
             return jsonify(error="Each record needs an integer person_id."), 400
         if len(ids) != len(entries):
             return jsonify(error="Duplicate person_id in records."), 400
-        # "status": null removes the person's record for that day (back to "Not recorded").
+        # "status": null removes the person's record for that day (back to "Not Recorded").
         # The key must be present, so a record with no status can never delete by accident.
         if any("status" not in e for e in entries):
             return jsonify(error="Each record needs a status (0, 1, 2, or null to remove)."), 400
         if any(e["status"] is not None and not valid_status(e["status"]) for e in entries):
             return jsonify(error=f"status must be one of {sorted(ALLOWED_STATUSES)}, or null to remove."), 400
 
-        known = {p.id for p in Person.query.filter(Person.id.in_(ids))}
-        if ids - known:
-            return jsonify(error=f"Unknown person_id(s): {sorted(ids - known)}"), 400
+        found = {p.id: p for p in Person.query.filter(Person.id.in_(ids))}
+        if ids - set(found):
+            return jsonify(error=f"Unknown person_id(s): {sorted(ids - set(found))}"), 400
+        former = sorted(p.name for p in found.values() if p.former)
+        if former:
+            return jsonify(error=f"Former people cannot be recorded: {', '.join(former)}. "
+                                 "Reload the page to see the current list."), 400
 
         existing = {r.person_id: r for r in AttendanceRecord.query.filter_by(date=day)}
         saved = removed = 0
@@ -819,7 +898,9 @@ def create_app() -> Flask:
             day = input_to_date(request.args.get("date"))
         except ValueError:
             return jsonify(error="Bad date format. Use YYYY-MM-DD."), 400
-        rows = AttendanceRecord.query.filter_by(date=day).all()
+        rows = (AttendanceRecord.query.filter_by(date=day)
+                .join(Person, Person.id == AttendanceRecord.person_id)
+                .filter(Person.former.is_(False)).all())
         return jsonify(date=day.isoformat(),
                     records=[{"person_id": r.person_id, "status": r.status} for r in rows])
 
@@ -898,16 +979,21 @@ def create_app() -> Flask:
     @app.get("/api/attendance/summary")
     @login_required
     def attendance_summary():
-        """Head-counts for today with no names, so any logged-in user can sanity-check the numbers."""
+        """Head-counts for today with no names, for admins and for logins linked to a person.
+
+        A login with no person behind it (never linked, or its person was removed) gets nothing, so someone who
+        has left cannot keep watching the office numbers."""
+        if not current_user.is_admin and current_user.person_id is None:
+            return jsonify(error="Your account isn't linked to a person, so there are no head-counts for you."), 403
         department = (request.args.get("department") or "").strip()
         if len(department) > Person.department.type.length:
             return jsonify(error="Unknown department."), 400
         day = local_today()
-        people_query = Person.query
+        people_query = Person.query.filter(Person.former.is_(False))
         records_query = (
             db.session.query(AttendanceRecord.status, db.func.count())
             .join(Person, Person.id == AttendanceRecord.person_id)
-            .filter(AttendanceRecord.date == day)
+            .filter(AttendanceRecord.date == day, Person.former.is_(False))
         )
         if department:
             people_query = people_query.filter(Person.department == department)
@@ -962,7 +1048,7 @@ def create_app() -> Flask:
         except backup.BackupError as err:
             raise click.ClickException(str(err))
         click.echo(f"Restored {result['people']} people and {result['records']} attendance records.")
-        click.echo("Logins are not part of a backup: link them to people again under Record attendance.")
+        click.echo("Logins are not part of a backup: create them again under Accounts (or link existing ones under People).")
 
     return app
 
@@ -977,6 +1063,7 @@ if __name__ == "__main__":
         db.create_all()
         ensure_attendance_schema()
         ensure_person_department()
+        ensure_person_former()
         ensure_user_person_link()
         ensure_user_account_columns()
         import_csv()

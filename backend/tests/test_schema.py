@@ -43,6 +43,7 @@ def startup(flask_app, appmod):
         db.create_all()
         appmod.ensure_attendance_schema()
         appmod.ensure_person_department()
+        appmod.ensure_person_former()
         appmod.ensure_user_person_link()
         appmod.ensure_user_account_columns()
 
@@ -118,6 +119,26 @@ def test_blank_and_null_departments_are_filled_and_real_ones_kept(old_db, appmod
     startup(old_db, appmod)
     assert dict(query(old_db, "SELECT name, department FROM person")) == {
         "Ana": "Holding", "Ben": "Holding", "Cai": "Holding", "Dee": "Finance", "Eli": "Management"}
+
+
+# ---- person.former -------------------------------------------------------------------------------
+
+def test_the_former_column_is_added_and_everyone_already_there_stays_active(old_db, appmod):
+    run_sql(old_db, "CREATE TABLE person (id INTEGER PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE, department VARCHAR(80) NOT NULL)",
+            "INSERT INTO person (name, department) VALUES ('Ana', 'Finance'), ('Ben', 'Holding')")
+    startup(old_db, appmod)
+    assert query(old_db, "SELECT name, department, former FROM person ORDER BY name") == [
+        ("Ana", "Finance", 0), ("Ben", "Holding", 0)]
+    assert columns(old_db, "person")["former"]["nullable"] is False
+    run_sql(old_db, "INSERT INTO person (name, department) VALUES ('Cai', 'Holding')")      # the default applies to new rows too
+    assert query(old_db, "SELECT former FROM person WHERE name = 'Cai'") == [(0,)]
+
+
+def test_the_former_column_is_not_added_twice_and_former_people_keep_their_flag(old_db, appmod):
+    startup(old_db, appmod)                                                                 # a fresh, current database
+    run_sql(old_db, "INSERT INTO person (name, department, former) VALUES ('Ana', 'Finance', 1)")
+    startup(old_db, appmod)
+    assert query(old_db, "SELECT name, former FROM person") == [("Ana", 1)]
 
 
 # ---- user.person_id ------------------------------------------------------------------------------

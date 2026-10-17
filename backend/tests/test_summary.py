@@ -12,8 +12,8 @@ def summary(client, department=None):
 
 
 def test_empty_database_is_all_zeros(flask_app, add_users):
-    add_users(("alice", False))
-    assert summary(login(flask_app, "alice")) == {
+    add_users(("admin", True))
+    assert summary(login(flask_app, "admin")) == {
         "date": TODAY, "department": None, "by_status": {"0": 0, "1": 0, "2": 0}, "not_recorded": 0, "total": 0,
     }
 
@@ -74,5 +74,5 @@ def test_the_summary_contains_no_names(world):
 def test_totals_add_up(world):
     for name, status in (("Ana", 1), ("Ben", 0), ("Cai", 2)):
         make_record(world.app, world.people[name], TODAY, status)
-    result = summary(login(world.app, "bob"))
+    result = summary(login(world.app, "alice"))
     assert sum(result["by_status"].values()) + result["not_recorded"] == result["total"] == 3

@@ -63,7 +63,8 @@ def restore(flask_app, text, replace=False):
         return backup.restore_csv(io.StringIO(text), allowed_statuses=ALLOWED, replace=replace)
 
 
-GOOD_HEADER = "person,department,date,status\r\n" #Change to \n for linux/mac, change department in future use
+GOOD_HEADER = "person,department,date,status\r\n"     # the older format, still accepted when loading
+FORMER_HEADER = "person,department,date,status,former\r\n"
 
 
 # ---- the download endpoint -----------------------------------------------------------------------
@@ -93,14 +94,14 @@ def test_download_contents(flask_app, add_users):
     text = login(flask_app, "admin").get("/api/export/attendance.csv").get_data(as_text=True)
     assert text.startswith("﻿")   # so Excel reads names as UTF-8
     lines = text.lstrip("﻿").splitlines()
-    assert lines[0] == "person,department,date,status"
+    assert lines[0] == "person,department,date,status,former"
     assert lines[1:] == [
-        "Ana,Finance,2025-12-31,1",
-        "Ana,Finance,2026-10-12,1",
-        "Ana,Finance,2026-10-13,2",
-        "Ben,Finance,2026-10-12,0",
-        "Cai,Management,2026-10-13,1",
-        "Dee,Holding,,",            # a person with no records is still in the backup
+        "Ana,Finance,2025-12-31,1,0",
+        "Ana,Finance,2026-10-12,1,0",
+        "Ana,Finance,2026-10-13,2,0",
+        "Ben,Finance,2026-10-12,0,0",
+        "Cai,Management,2026-10-13,1,0",
+        "Dee,Holding,,,0",          # a person with no records is still in the backup
     ]
 
 
@@ -114,7 +115,7 @@ def test_download_never_contains_logins_or_password_hashes(flask_app, add_users)
 def test_download_of_an_empty_database_is_just_the_header(flask_app, add_users):
     add_users(("admin", True))
     text = login(flask_app, "admin").get("/api/export/attendance.csv").get_data(as_text=True)
-    assert text.lstrip("﻿").strip() == "person,department,date,status"
+    assert text.lstrip("﻿").strip() == "person,department,date,status,former"
 
 
 def test_names_with_commas_quotes_and_accents_survive(make_app):
@@ -213,6 +214,10 @@ BAD_FILES = {
     "duplicate record": (GOOD_HEADER + "Ana,Finance,2026-10-12,1\r\nAna,Finance,2026-10-12,0\r\n", "already has a record"),
     "two departments": (GOOD_HEADER + "Ana,Finance,2026-10-12,1\r\nAna,Manpower,2026-10-13,1\r\n", "two different departments"),
     "name too long": (GOOD_HEADER + ("x" * 81) + ",Finance,2026-10-12,1\r\n", "longer than 80"),
+    "former is not 0 or 1": (FORMER_HEADER + "Ana,Finance,2026-10-12,1,2\r\n", "former must be 0 or 1"),
+    "former is a word": (FORMER_HEADER + "Ana,Finance,2026-10-12,1,yes\r\n", "former must be 0 or 1"),
+    "former on one row only": (FORMER_HEADER + "Ana,Finance,2026-10-12,1,1\r\nAna,Finance,2026-10-13,1,0\r\n",
+                               "both former and not former"),
 }
 
 
@@ -286,3 +291,19 @@ def test_cli_replace_asks_first_and_yes_skips_the_question(make_app, tmp_path):
     confirmed = runner.invoke(args=["import-backup", str(path), "--replace", "--yes"])
     assert confirmed.exit_code == 0, confirmed.output
     assert counts(target) == (1, 1)
+
+
+def test_a_file_from_before_the_former_column_restores_everyone_as_active(make_app):
+    from users import Person
+    target = make_app("target")
+    restore(target, GOOD_HEADER + "Ana,Finance,2026-10-12,1\r\nBen,Finance,,\r\n")
+    with target.app_context():
+        assert {p.name: p.former for p in Person.query} == {"Ana": False, "Ben": False}
+
+
+def test_a_blank_former_cell_means_active_and_one_means_former(make_app):
+    from users import Person
+    target = make_app("target")
+    restore(target, FORMER_HEADER + "Ana,Finance,2026-10-12,1,\r\nBen,Finance,2026-10-12,0,1\r\nCai,Holding,,,1\r\n")
+    with target.app_context():
+        assert {p.name: p.former for p in Person.query} == {"Ana": False, "Ben": True, "Cai": True}

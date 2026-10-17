@@ -46,6 +46,10 @@ class Person(db.Model):
         default=DEFAULT_DEPARTMENT,
         server_default=DEFAULT_DEPARTMENT,
     )
+    # A former person has been "removed" by an admin: they stay in the database with all their attendance
+    # (so history and backups are intact) but drop out of the board, predictions, head-counts and new logins.
+    # An admin can restore them. Nothing here is ever deleted by removing a person.
+    former = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     attendance_records = db.relationship('AttendanceRecord', backref='person', lazy=True)
 
 class AttendanceRecord(db.Model):

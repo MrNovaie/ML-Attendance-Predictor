@@ -7,7 +7,7 @@ Public API (what the rest of your app should use):
     evaluate(person) -> dict                 # accuracy + baseline for one person
     train_all_models(data, name_list)        # (re)train and save the models dict
     load_models()                            # load cached models (or train + cache)
-    invalidate_models()                      # drop the cache; call after DELETING attendance rows
+    invalidate_models()                      # drop the cache; call after deleting attendance rows or renaming / removing / restoring a person
     get_name_list(data)                      # derive name list from data columns
 
 """
@@ -22,6 +22,7 @@ from datetime import timezone
 from sklearn.naive_bayes import CategoricalNB
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from sqlalchemy import text
 
 from extensions import db
 from users import AttendanceRecord
@@ -45,13 +46,15 @@ YEAR = 2026
 
 
 def load_data() -> pd.DataFrame:
-    query = """
+    # Former people (removed by an admin) keep their records but are left out of every model and prediction.
+    query = text("""
     SELECT p.name AS person_name, a.date, a.day_of_week, a.status
     FROM attendance_record a
     JOIN person p ON p.id = a.person_id
+    WHERE p.former = :former
     ORDER BY a.date
-    """
-    long_df = pd.read_sql(query, db.engine)
+    """)
+    long_df = pd.read_sql(query, db.engine, params={"former": False})
 
     wide = long_df.pivot(index="date", columns="person_name", values="status")
     wide["Day of Week"] = long_df.groupby("date")["day_of_week"].first()
@@ -121,9 +124,10 @@ def load_models() -> dict[str, CategoricalNB]:
 def invalidate_models() -> None:
     """Throw away the cached models so the next load_models() retrains from the current rows.
 
-    Needed after deleting attendance records: load_models() only compares max(updated_at)
-    with the cache file's mtime, and removing a row changes neither, so a stale model would
-    keep being served. Retraining happens lazily on the next prediction, not here.
+    Needed after deleting attendance records, and after renaming, removing or restoring a person:
+    load_models() only compares max(updated_at) with the cache file's mtime, and none of those
+    change it, so a stale model would keep being served. Retraining happens lazily on the next
+    prediction, not here.
     """
     MODELS_PATH.unlink(missing_ok=True)
 

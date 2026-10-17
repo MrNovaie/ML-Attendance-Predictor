@@ -2,18 +2,20 @@
 
 File format (one header row, then one row per record):
 
-    person,department,date,status
-    Ana,Finance,2026-10-12,1
-    Ben,Finance,2026-10-12,0
-    Cai,Holding,,
+    person,department,date,status,former
+    Ana,Finance,2026-10-12,1,0
+    Ben,Finance,2026-10-12,0,0
+    Cai,Holding,,,1
 
 * date is ISO (YYYY-MM-DD), so history can span any number of years.
 * status is the numeric code stored in the database (0 = Out, 1 = In, 2 = Partial Day).
 * A person with no records at all gets a single row with an empty date and status, so the roster
   survives a round trip too.
+* former is 1 for a person an admin has removed (they keep their history but are inactive), otherwise 0.
+  The column is optional when loading: a file from before it existed restores everyone as active.
 
 Not included, on purpose: logins and their person links. Password hashes should not sit in a
-spreadsheet. After a restore, an admin links the logins to people again.
+spreadsheet. After a restore, an admin creates the logins again (Accounts) or links existing ones (People).
 
 Restoring validates the whole file first and writes in one transaction, so a bad file changes nothing.
 """
@@ -27,7 +29,8 @@ from extensions import db
 from ml import invalidate_models
 from users import DEFAULT_DEPARTMENT, AttendanceRecord, Person, User
 
-COLUMNS = ["person", "department", "date", "status"]
+COLUMNS = ["person", "department", "date", "status"]   # required when loading
+EXPORT_COLUMNS = COLUMNS + ["former"]                  # what a backup contains
 # Excel needs a byte-order mark to open a UTF-8 CSV with accented names intact.
 BOM = "﻿"
 MAX_ERRORS_SHOWN = 10
@@ -44,30 +47,31 @@ def _department_of(person) -> str:
 
 
 def export_rows():
-    """Yield [person, department, date, status] for the whole database, sorted by person then date."""
+    """Yield [person, department, date, status, former] for the whole database, sorted by person then date."""
     records_by_person = defaultdict(list)
     for record in AttendanceRecord.query.order_by(AttendanceRecord.date):
         records_by_person[record.person_id].append(record)
     for person in Person.query.order_by(Person.name):
         department = _department_of(person)
+        former = 1 if person.former else 0
         records = records_by_person.get(person.id)
         if not records:
-            yield [person.name, department, "", ""]
+            yield [person.name, department, "", "", former]
             continue
         for record in records:
-            yield [person.name, department, record.date.isoformat(), record.status]
+            yield [person.name, department, record.date.isoformat(), record.status, former]
 
 
 def export_csv_text() -> str:
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\r\n")
-    writer.writerow(COLUMNS)
+    writer.writerow(EXPORT_COLUMNS)
     writer.writerows(export_rows())
     return BOM + out.getvalue()
 
 
 def _parse(stream, allowed_statuses):
-    """Read the whole file into (departments_by_person, records). Raises BackupError listing every
+    """Read the whole file into (departments_by_person, former_by_person, records). Raises BackupError listing every
     problem found (up to a limit), so the user can fix the file in one go."""
     reader = csv.DictReader(stream)
     # A leading BOM (written for Excel) is not part of the first column name.
@@ -81,6 +85,7 @@ def _parse(stream, allowed_statuses):
 
     errors = []
     departments = {}  # person name -> department
+    former = {}       # person name -> True when they are a former person
     records = {}      # (person name, date) -> status
 
     def problem(line, message):
@@ -92,6 +97,7 @@ def _parse(stream, allowed_statuses):
         department = (row.get("department") or "").strip() or DEFAULT_DEPARTMENT
         day_text = (row.get("date") or "").strip()
         status_text = (row.get("status") or "").strip()
+        former_text = (row.get("former") or "").strip()
 
         if not name:
             problem(line, "person is empty.")
@@ -105,6 +111,13 @@ def _parse(stream, allowed_statuses):
         if departments.setdefault(name, department) != department:
             problem(line, f"{name} appears with two different departments "
                           f"({departments[name]} and {department}).")
+            continue
+
+        if former_text not in ("", "0", "1"):
+            problem(line, f"former must be 0 or 1, not '{former_text}'.")
+            continue
+        if former.setdefault(name, former_text == "1") != (former_text == "1"):
+            problem(line, f"{name} is marked both former and not former.")
             continue
 
         if not day_text and not status_text:
@@ -137,7 +150,7 @@ def _parse(stream, allowed_statuses):
         if extra:
             shown.append(f"... and {extra} more.")
         raise BackupError("The backup file has problems:\n" + "\n".join(shown))
-    return departments, records
+    return departments, former, records
 
 
 def restore_csv(stream, *, allowed_statuses, replace=False) -> dict:
@@ -147,7 +160,7 @@ def restore_csv(stream, *, allowed_statuses, replace=False) -> dict:
     deletes all of it first (and unlinks every login from its person). Nothing is written if the
     file has any problem.
     """
-    departments, records = _parse(stream, allowed_statuses)
+    departments, former, records = _parse(stream, allowed_statuses)
 
     has_data = Person.query.first() is not None or AttendanceRecord.query.first() is not None
     if has_data and not replace:
@@ -164,7 +177,7 @@ def restore_csv(stream, *, allowed_statuses, replace=False) -> dict:
             db.session.flush()
         people = {}
         for name in sorted(departments):
-            person = Person(name=name, department=departments[name])
+            person = Person(name=name, department=departments[name], former=former.get(name, False))
             db.session.add(person)
             people[name] = person
         db.session.flush()  # assigns the ids

@@ -50,6 +50,7 @@ def make_app(appmod, tmp_path, monkeypatch, set_clock):
             db.create_all()
             appmod.ensure_attendance_schema()
             appmod.ensure_person_department()
+            appmod.ensure_person_former()
             appmod.ensure_user_person_link()
             appmod.ensure_user_account_columns()
         return flask_app
