@@ -51,6 +51,7 @@ def make_app(appmod, tmp_path, monkeypatch, set_clock):
             appmod.ensure_attendance_schema()
             appmod.ensure_person_department()
             appmod.ensure_user_person_link()
+            appmod.ensure_user_account_columns()
         return flask_app
 
     return _make

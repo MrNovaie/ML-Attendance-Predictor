@@ -1,7 +1,11 @@
+import hmac
 import logging
 import os
 import click
 import math
+import re
+import secrets
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 
 from flask import Flask, Response, jsonify, request
@@ -58,6 +62,41 @@ def self_service_window(now: datetime) -> tuple[bool, int]:
     if now >= cutoff:
         return False, 0
     return True, math.ceil((cutoff - now).total_seconds())
+
+
+PASSWORD_MIN, PASSWORD_MAX = 8, 128
+# Temporary passwords skip look-alike characters (0/O, 1/l/I), because an admin reads them out or prints them.
+TEMPORARY_PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+TEMPORARY_PASSWORD_LENGTH = 12
+BULK_LOGIN_LIMIT = 200
+
+
+def password_problem(password) -> str | None:
+    """Why `password` is not acceptable, or None when it is."""
+    if not isinstance(password, str):
+        return "Password must be text"
+    if len(password) < PASSWORD_MIN:
+        return f"Password must be at least {PASSWORD_MIN} characters"
+    if len(password) > PASSWORD_MAX:
+        return f"Password must be at most {PASSWORD_MAX} characters"
+    return None
+
+
+def make_temporary_password() -> str:
+    return "".join(secrets.choice(TEMPORARY_PASSWORD_ALPHABET) for _ in range(TEMPORARY_PASSWORD_LENGTH))
+
+
+def username_from_name(name: str, taken: set) -> str:
+    """'José Luis' -> 'jose.luis'; a number is added when that is taken ('jose.luis2'). `taken` holds lower-case names
+    and is updated, so a batch never hands out the same username twice."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").lower()
+    base = re.sub(r"[^a-z0-9]+", ".", ascii_name).strip(".")[:70] or "user"
+    candidate, number = base, 1
+    while candidate in taken:
+        number += 1
+        candidate = f"{base}{number}"
+    taken.add(candidate)
+    return candidate
 
 
 def department_of(person) -> str:
@@ -137,6 +176,29 @@ def ensure_user_person_link() -> None:
         conn.execute(text(f"CREATE UNIQUE INDEX uq_user_person_id ON {quoted} (person_id)"))
 
 
+def ensure_user_account_columns() -> None:
+    """Add user.must_change_password and user.requested_department to a database created before they existed.
+
+    db.create_all() never alters existing tables. Existing logins keep working: nobody is forced to change a
+    password they already have, and nobody has a pending department request.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(db.engine)
+    table = User.__table__.name
+    if not inspector.has_table(table):
+        return
+    existing = {c["name"] for c in inspector.get_columns(table)}
+    quoted = db.engine.dialect.identifier_preparer.quote(table)
+    with db.engine.begin() as conn:
+        if "must_change_password" not in existing:
+            logger.warning("%s.must_change_password is missing. Adding the column.", table)
+            conn.execute(text(f"ALTER TABLE {quoted} ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0"))
+        if "requested_department" not in existing:
+            logger.warning("%s.requested_department is missing. Adding the column.", table)
+            conn.execute(text(f"ALTER TABLE {quoted} ADD COLUMN requested_department VARCHAR(80)"))
+
+
 def _resolve_secret_key() -> str:
     """Refuse to boot in production without an explicit SECRET_KEY.
 
@@ -182,6 +244,8 @@ def create_app() -> Flask:
     )
     app.config["SECRET_KEY"] = _resolve_secret_key()
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    # Open sign-up is OFF unless ALLOW_REGISTRATION is set to 1/true/yes. With it off, only admins create logins.
+    app.config["ALLOW_REGISTRATION"] = os.environ.get("ALLOW_REGISTRATION", "").strip().lower() in ("1", "true", "yes")
     # Session cookie hardening. SAMESITE="Lax" still lets the SPA call us from
     # the same registrable domain; switch to "None" + SECURE=True only if the
     # frontend lives on a separate site and is served over HTTPS.
@@ -200,45 +264,22 @@ def create_app() -> Flask:
     @login_manager.unauthorized_handler
     def unauthorized():
         return jsonify(code=401, error="Unauthorized. Please login to continue."), 401
+    # A login that must change its password (new login, or reset by an admin) may only change it, ask who it is,
+    # or log out. The server enforces this, so the screen is not the only thing standing in the way.
+    PASSWORD_CHANGE_ENDPOINTS = {"me", "logout", "change_my_password", "login"}
+
+    @app.before_request
+    def require_password_change():
+        if request.method == "OPTIONS" or not request.path.startswith("/api/"):
+            return None
+        if request.endpoint in PASSWORD_CHANGE_ENDPOINTS:
+            return None
+        if current_user.is_authenticated and current_user.must_change_password:
+            return jsonify(code=403, password_change_required=True,
+                           error="You must change your password before you can continue."), 403
+        return None
+
     '''Endpoint Section'''
-    @app.get("/api/predict")
-    @login_required
-    def predict():
-        raw = request.args.get("date")
-        try:
-            target = input_to_date(raw)
-            if target < date.today():
-                return jsonify(error="Date must be today or in the future."), 400
-        except ValueError:
-            return jsonify(error="Bad date format. Use YYYY-MM-DD."), 400
-        result = predict_all_for_date(target)
-        if "error" in result:
-            return jsonify(error=result["error"]), 400
-        predictions = result["predictions"]
-        message = result["message"]
-        return jsonify ({
-            "status": "success",
-            "requested_date": target.isoformat(),
-            "predictions": predictions,
-            "message": message
-        })
-
-    @app.get("/api/evaluate")
-    @login_required
-    def evaluate():
-        return jsonify(evaluate_all())
-
-    @app.get("/api/people")
-    @login_required
-    def people():
-        rows = Person.query.order_by(Person.id).all()
-        result = [{"id": p.id, "name": p.name, "department": department_of(p)} for p in rows]
-        if current_user.is_admin:
-            # Which login is linked to whom is admin business; other users never see it.
-            logins = {u.person_id: u.id for u in User.query.filter(User.person_id.isnot(None))}
-            for entry in result:
-                entry["user_id"] = logins.get(entry["id"])
-        return jsonify(result)
 
     @app.get("/api/departments")
     @login_required
@@ -277,27 +318,57 @@ def create_app() -> Flask:
     def load_user(user_id: str) -> User | None:
         # Only ValueError/TypeError are expected here (bad cookie payload).
         # DB errors should bubble up so we notice them.
+        # The id in the cookie is "<id>:<fingerprint of the password>", so a password change or reset ends
+        # every session that was started with the old password.
         try:
-            return db.session.get(User, int(user_id))
+            id_part, _, fingerprint = user_id.partition(":")
+            user = db.session.get(User, int(id_part))
         except (ValueError, TypeError):
             return None
+        if user is None or not hmac.compare_digest(fingerprint, user.session_fingerprint()):
+            return None
+        return user
+
+    @app.get("/api/auth/options")
+    def auth_options():
+        """What the login screen needs before anyone is logged in: is sign-up open, and which departments to offer."""
+        is_open = bool(app.config["ALLOW_REGISTRATION"])
+        return jsonify(registration_open=is_open,
+                       departments=[DEFAULT_DEPARTMENT, *DEPARTMENTS] if is_open else [],
+                       default_department=DEFAULT_DEPARTMENT)
 
     @app.route("/api/register", methods=["POST"])
     def register():
+        if not app.config["ALLOW_REGISTRATION"]:
+            return jsonify(code=403, error="Sign-up is closed. Ask an admin to create your account."), 403
         body = request.get_json(silent=True) or {}
-        username = (body.get("username") or "").strip()
+        username = body.get("username").strip()
         password = body.get("password")
         confirmPassword = body.get("confirmPassword")
-        if not username or not password or not confirmPassword:
+        if not isinstance(username, str) or not username or not password or not confirmPassword:
             return jsonify(code=400, error="Username and password are required"), 400
-        if len(password) < 8:
-            return jsonify(code=400, error="Password must be at least 8 characters"), 400
+        username = username.strip()
+        if len(username) > 80:
+            return jsonify(code=400, error="Username must be at most 80 characters"), 400
+        problem = password_problem(password)
+        if problem:
+            return jsonify(code=400, error=problem), 400
         if password != confirmPassword:
             return jsonify(code=400, error="Passwords do not match"), 400
+        # Optional: the department they would like. Blank means no request. An admin confirms it later.
+        requested_department = None
+        raw_department = body.get("department")
+        if isinstance(raw_department, str) and raw_department.strip():
+            requested_department, error = clean_department(raw_department)
+            if error:
+                return jsonify(code=400, error=error), 400
+        elif raw_department is not None and not isinstance(raw_department, str):
+            return jsonify(code=400, error="Department must be text."), 400
         if User.query.filter_by(username=username).first():
             return jsonify(code=400, error="User already exists"), 400
         try:
-            new_user = User(username=username, password=generate_password_hash(password))
+            new_user = User(username=username, password=generate_password_hash(password),
+                            requested_department=requested_department)
             db.session.add(new_user)
             db.session.commit()
         except IntegrityError:
@@ -314,10 +385,75 @@ def create_app() -> Flask:
     @app.get("/api/me")
     @login_required
     def me():
-        return jsonify(code=200, username=current_user.username, is_admin = bool(current_user.is_admin))
+        return jsonify(code=200, username=current_user.username, is_admin = bool(current_user.is_admin),
+                       must_change_password=bool(current_user.must_change_password))
 
-
+    @app.post("/api/me/password")
+    @login_required
+    def change_my_password():
+        body = request.get_json(silent=True) or {}
+        current = body.get("current_password")
+        new = body.get("new_password")
+        if not isinstance(current, str) or not check_password_hash(current_user.password, current):
+            return jsonify(code=400, error="Your current password is wrong."), 400
+        problem = password_problem(new)
+        if problem:
+            return jsonify(code=400, error=problem), 400
+        if new == current:
+            return jsonify(code=400, error="The new password must be different from the current one."), 400
+        user = db.session.get(User, current_user.id)
+        try:
+            user.password = generate_password_hash(new)
+            user.must_change_password = False
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception("Failed to change password for user id=%s", current_user.id)
+            return jsonify(code=500, error="Internal server error"), 500
+        login_user(user)  # new session id (the password is part of it); every other browser is logged out
+        return jsonify(code=200, status="success", message="Password changed")
     '''Admin Commands'''
+    @app.get("/api/predict")
+    @login_required
+    @admin_required
+    def predict():
+        raw = request.args.get("date")
+        try:
+            target = input_to_date(raw)
+            if target < date.today():
+                return jsonify(error="Date must be today or in the future."), 400
+        except ValueError:
+            return jsonify(error="Bad date format. Use YYYY-MM-DD."), 400
+        result = predict_all_for_date(target)
+        if "error" in result:
+            return jsonify(error=result["error"]), 400
+        predictions = result["predictions"]
+        message = result["message"]
+        return jsonify ({
+            "status": "success",
+            "requested_date": target.isoformat(),
+            "predictions": predictions,
+            "message": message
+        })
+
+    @app.get("/api/evaluate")
+    @login_required
+    @admin_required
+    def evaluate():
+        return jsonify(evaluate_all())
+
+    @app.get("/api/people")
+    @login_required
+    @admin_required
+    def people():
+        # Admin-only: the list holds everyone's name and department, and which login belongs to whom.
+        rows = Person.query.order_by(Person.id).all()
+        result = [{"id": p.id, "name": p.name, "department": department_of(p)} for p in rows]
+        logins = {u.person_id: u.id for u in User.query.filter(User.person_id.isnot(None))}
+        for entry in result:
+            entry["user_id"] = logins.get(entry["id"])
+        return jsonify(result)
+    
     @app.cli.command("create-admin")
     @click.argument("username")
     @click.password_option()
@@ -329,13 +465,30 @@ def create_app() -> Flask:
         db.session.commit()
         click.echo(f"Admin '{username}' created.")
 
+    @app.cli.command("set-password")
+    @click.argument("username")
+    @click.password_option()
+    def set_password(username, password):
+        """Set a login's password from the command line, e.g. when the only admin has forgotten theirs."""
+        user = User.query.filter_by(username=username.strip()).first()
+        if user is None:
+            raise click.ClickException(f"No login called '{username}'.")
+        problem = password_problem(password)
+        if problem:
+            raise click.ClickException(problem)
+        user.password = generate_password_hash(password)
+        user.must_change_password = False
+        db.session.commit()
+        click.echo(f"Password for '{user.username}' changed.")
+
     @app.get("/api/users") #GETS user info from API
     @login_required
     @admin_required
     def list_users():
         rows = User.query.order_by(User.username).all()
         return jsonify([
-            {"id": u.id, "username": u.username, "is_admin": bool(u.is_admin), "person_id": u.person_id}
+            {"id": u.id, "username": u.username, "is_admin": bool(u.is_admin), "person_id": u.person_id,
+             "must_change_password": bool(u.must_change_password), "requested_department": u.requested_department}
             for u in rows
         ])
     
@@ -344,19 +497,24 @@ def create_app() -> Flask:
     @admin_required
     def add_user():
         body = request.get_json(silent=True) or {}
-        username = (body.get("username") or "").strip()
+        username = body.get("username")
+        username = username.strip() if isinstance(username, str) else ""
         password = body.get("password") or ""
         is_admin = bool(body.get("is_admin", False))
 
         if not username or not password:
             return jsonify(code=400, error="Username and password are required"), 400
-        if len(password) < 8:
-            return jsonify(code=400, error="Password must be at least 8 characters"), 400
+        problem = password_problem(password)
+        if problem:
+            return jsonify(code=400, error=problem), 400
 
+        # The admin knows this password, so by default the new user must replace it at first login.
+        must_change = body.get("must_change_password", True) is not False
         user = User(
             username=username,
             password=generate_password_hash(password),
             is_admin=is_admin,
+            must_change_password=must_change,
         )
         try:
             db.session.add(user)
@@ -370,6 +528,115 @@ def create_app() -> Flask:
             return jsonify(code=500, error="Internal server error"), 500
 
         return jsonify(code=201, status="success", id=user.id, username=user.username), 201
+
+    @app.post("/api/users/<int:user_id>/password")
+    @login_required
+    @admin_required
+    def reset_password(user_id: int):
+        """Give a login a temporary password (the one in the body, or a generated one). They must change it at next login."""
+        if user_id == current_user.id:
+            return jsonify(code=400, error="Use Change password for your own account."), 400
+        user = db.session.get(User, user_id)
+        if user is None:
+            return jsonify(code=404, error="User not found"), 404
+        body = request.get_json(silent=True) or {}
+        password = body.get("password")
+        generated = password is None or (isinstance(password, str) and not password.strip())
+        if generated:
+            password = make_temporary_password()
+        else:
+            problem = password_problem(password)
+            if problem:
+                return jsonify(code=400, error=problem), 400
+        try:
+            user.password = generate_password_hash(password)
+            user.must_change_password = True
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception("Failed to reset password for user id=%s", user_id)
+            return jsonify(code=500, error="Internal server error"), 500
+        return jsonify(code=200, status="success", username=user.username,
+                       temporary_password=password, generated=generated)
+
+    @app.post("/api/users/bulk")
+    @login_required
+    @admin_required
+    def bulk_create_users():
+        """One login per chosen person, linked to them, with a generated temporary password each.
+
+        All or nothing: a person who already has a login, or an unknown person, stops the whole batch.
+        The passwords are in this response only, so the admin has to hand them out (or download them) now.
+        """
+        body = request.get_json(silent=True) or {}
+        ids = body.get("person_ids")
+        if not isinstance(ids, list) or not ids:
+            return jsonify(code=400, error="Choose at least one person."), 400
+        if len(ids) > BULK_LOGIN_LIMIT:
+            return jsonify(code=400, error=f"At most {BULK_LOGIN_LIMIT} logins at a time."), 400
+        if any(type(i) is not int for i in ids):  # type() so that true/false are not accepted as 1/0
+            return jsonify(code=400, error="person_ids must be a list of integers."), 400
+        ids = list(dict.fromkeys(ids))
+        people = {p.id: p for p in Person.query.filter(Person.id.in_(ids))}
+        missing = [i for i in ids if i not in people]
+        if missing:
+            return jsonify(code=404, error=f"Person not found: {', '.join(map(str, missing))}."), 404
+        linked = {u.person_id for u in User.query.filter(User.person_id.in_(ids))}
+        if linked:
+            names = ", ".join(sorted(people[i].name for i in linked))
+            return jsonify(code=409, error=f"These people already have a login: {names}."), 409
+
+        taken = {u.username.lower() for u in User.query.with_entities(User.username)}
+        created = []
+        try:
+            for person in sorted(people.values(), key=lambda p: p.name.lower()):
+                username = username_from_name(person.name, taken)
+                temporary = make_temporary_password()
+                db.session.add(User(username=username, password=generate_password_hash(temporary), is_admin=False,
+                                    person_id=person.id, must_change_password=True))
+                created.append({"person_id": person.id, "person": person.name, "username": username,
+                                "temporary_password": temporary})
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(code=409, error="Someone else changed the logins at the same time. Nothing was created; try again."), 409
+        except Exception:
+            db.session.rollback()
+            logger.exception("Failed to create logins in bulk")
+            return jsonify(code=500, error="Internal server error"), 500
+        return jsonify(code=201, status="success", created=created), 201
+
+    @app.post("/api/users/<int:user_id>/department-request")
+    @login_required
+    @admin_required
+    def answer_department_request(user_id: int):
+        """Confirm (the linked person moves to the requested department) or dismiss a sign-up department request."""
+        user = db.session.get(User, user_id)
+        if user is None:
+            return jsonify(code=404, error="User not found"), 404
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        if action not in ("confirm", "dismiss"):
+            return jsonify(code=400, error="action must be 'confirm' or 'dismiss'."), 400
+        requested = user.requested_department
+        if not requested:
+            return jsonify(code=409, error="This login has no pending department request."), 409
+        if action == "confirm":
+            person = db.session.get(Person, user.person_id) if user.person_id else None
+            if person is None:
+                return jsonify(code=409, error="Link this login to a person first."), 409
+            department, error = clean_department(requested)
+            if error:
+                return jsonify(code=400, error=error), 400
+            person.department = department
+        user.requested_department = None
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception("Failed to answer department request of user id=%s", user_id)
+            return jsonify(code=500, error="Internal server error"), 500
+        return jsonify(code=200, status="success", action=action, department=requested)
 
     @app.delete("/api/users/<int:user_id>") #DELETES users from API
     @login_required
@@ -711,5 +978,6 @@ if __name__ == "__main__":
         ensure_attendance_schema()
         ensure_person_department()
         ensure_user_person_link()
+        ensure_user_account_columns()
         import_csv()
     app.run(debug=True, port=5000)

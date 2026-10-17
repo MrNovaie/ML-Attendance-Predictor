@@ -1,3 +1,5 @@
+import hashlib
+
 from flask_login import UserMixin
 from extensions import db
 
@@ -16,6 +18,20 @@ class User(UserMixin, db.Model):
     # produces ~150-200+ char strings; 80 truncates and breaks login).
     password = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default = False, nullable = False)
+    # True = an admin created the login or reset its password. False = the user has picked their own password and can do anything else.
+    must_change_password = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    # The department someone asked for when they signed up (only when sign-up is open). Sent to admin as a request:
+    # They confirm it (it then becomes the linked person's department) or dismisses it.
+    requested_department = db.Column(db.String(80), nullable=True)
+
+    def session_fingerprint(self) -> str:
+        # Part of the session cookie's user id (see get_id). Changing the password changes it,
+        # so every other browser that was logged in as this user is logged out.
+        return hashlib.sha256(self.password.encode("utf-8")).hexdigest()[:16]
+
+    def get_id(self) -> str:
+        return f"{self.id}:{self.session_fingerprint()}"
+
     def __repr__(self):
         return f"<User {self.username}>"
 

@@ -64,6 +64,25 @@ export async function downloadBackup(serverUrl) {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
     return fileName
 }
+// The 2 functions below help download a CSV of the new usernames and temporary passwords.
+// Saves text as a file in the browser (UTF-8 with a byte-order mark, so Excel reads accents correctly).
+export function downloadTextFile(fileName, text, type = 'text/csv') {
+    const url = URL.createObjectURL(new Blob(['\uFEFF', text], { type: `${type};charset=utf-8` }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+// One CSV cell: quoted when needed, and a leading = + - @ is neutralised so a spreadsheet never runs it as a formula.
+export function csvCell(value) {
+    let text = String(value ?? '')
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
+    return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+}
 
 export async function readJson(response) {
     let data = null

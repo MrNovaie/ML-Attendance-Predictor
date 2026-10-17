@@ -3,6 +3,8 @@ import './App.css'
 import AttendanceForm from './AttendanceForm'
 import PeopleSection from './PeopleSection'
 import BackupSection from './BackupSection'
+import AccountsSection from './AccountsSection'
+import ChangePassword from './ChangePassword'
 import UserManagement from './UserManagement'
 import DailyAttendance from './DailyAttendance'
 import FilterBar from './FilterBar'
@@ -27,6 +29,10 @@ function App() {
     const [authChecking, setAuthChecking] = useState(true)
     const [authView, setAuthView] = useState('login')
     const [authNotice, setAuthNotice] = useState('')
+    const [authOptions, setAuthOptions] = useState({ registration_open: false, departments: [], default_department: 'Holding' })
+    const [mustChange, setMustChange] = useState(false) // this login has a temporary password and must pick its own
+    const [showChangePassword, setShowChangePassword] = useState(false)
+    const [passwordNotice, setPasswordNotice] = useState('')
     const [view, setView] = useState('predictions') // 'predictions' | 'attendance'
     const [predictionsVersion, setPredictionsVersion] = useState(0) // bumped after attendance is saved
     const [peopleVersion, setPeopleVersion] = useState(0) // bumped after the People section adds a person or moves a link
@@ -56,21 +62,35 @@ function App() {
             if (!response.ok) {
                 setUser(null)
                 setIsAdmin(false)
+                setMustChange(false)
                 return
             }
             const data = await response.json()
             setUser(data.username)
             setIsAdmin(data.is_admin)
+            setMustChange(Boolean(data.must_change_password))
         } catch (err) {
             console.error('Session check failed:', err)
             setUser(null)
             setIsAdmin(false)
+            setMustChange(false)
         }
     }, [])
 
     useEffect(() => {
         refreshUser().finally(() => setAuthChecking(false))
     }, [refreshUser])
+
+    // The login screen asks whether sign-up is open (it is closed unless the server's ALLOW_REGISTRATION is set to 1).
+    useEffect(() => {
+        if (authChecking || user) return
+        fetch(`${SERVER_URL}/api/auth/options`, { credentials: 'include' })
+            .then((response) => (response.ok ? response.json() : null))
+            .then((data) => {
+                if (data) setAuthOptions(data)
+            })
+            .catch((err) => console.error('Loading sign-in options failed:', err))
+    }, [authChecking, user])
 
     useEffect(() => {
         if (!user || !isAdmin || !date) return
@@ -131,14 +151,28 @@ function App() {
         )
     }
 
+    // Clears everything that belongs to one login, whether it logs out or the screen is shown to the next person
+    function resetSession() {
+        setUser(null)
+        setIsAdmin(false)
+        setMustChange(false)
+        setView('predictions')
+        setDepartment('')
+        setSearch('')
+        setPeople([])
+        setShowChangePassword(false)
+        setPasswordNotice('')
+    }
+
     if (!user) {
         return (
             <div className="app-container auth-container">
                 <h1 className="title">Attendance Predictor</h1>
                 {authNotice && <p className="auth-notice">{authNotice}</p>}
-                {authView === 'login' ? (
+                {authView === 'login' || !authOptions.registration_open ? (
                     <LoginForm
                         onSuccess={refreshUser}
+                        signupOpen={authOptions.registration_open}
                         onSwitchRegister={() => {
                             setAuthNotice('')
                             setAuthView('register')
@@ -146,8 +180,14 @@ function App() {
                     />
                 ) : (
                     <RegisterForm
-                        onSuccess={() => {
-                            setAuthNotice('Account created. Please log in.')
+                        departments={authOptions.departments.filter((d) => d !== authOptions.default_department)}
+                        defaultDepartment={authOptions.default_department}
+                        onSuccess={(askedForDepartment) => {
+                            setAuthNotice(
+                                askedForDepartment
+                                    ? 'Account created. An admin will confirm your department. Please log in.'
+                                    : 'Account created. Please log in.',
+                            )
                             setAuthView('login')
                         }}
                         onSwitchLogin={() => {
@@ -160,12 +200,49 @@ function App() {
         )
     }
 
+    // A temporary password (new login, or reset by an admin): nothing else is shown until the user has chosen their own.
+    // The server refuses every other request from this login in the meantime.
+    if (mustChange) {
+        return (
+            <div className="app-container auth-container">
+                <h1 className="title">Attendance Predictor</h1>
+                <p className="auth-notice">Welcome, {user}.</p>
+                <ChangePassword serverUrl={SERVER_URL} forced onChanged={refreshUser} />
+                <LogoutButton onLogout={resetSession} />
+            </div>
+        )
+    }
+
     return (
         <div className="app-container">
             <div className="auth-bar">
                 <span>Welcome back, <strong style={{ color: 'cyan', fontFamily: 'cursive'}}>{user}</strong></span>
-                <LogoutButton onLogout={() => {setUser(null); setIsAdmin(false); setView('predictions'); setDepartment(''); setSearch(''); setPeople([])} } />
+                <span className="auth-bar-buttons">
+                    <button
+                        type="button"
+                        className="evaluate-btn auth-logout-btn"
+                        onClick={() => {
+                            setPasswordNotice('')
+                            setShowChangePassword((open) => !open)
+                        }}
+                        aria-expanded={showChangePassword}
+                    >
+                        Change password
+                    </button>
+                    <LogoutButton onLogout={resetSession} />
+                </span>
             </div>
+            {showChangePassword && (
+                <ChangePassword
+                    serverUrl={SERVER_URL}
+                    onChanged={() => {
+                        setShowChangePassword(false)
+                        setPasswordNotice('Password changed.')
+                    }}
+                    onCancel={() => setShowChangePassword(false)}
+                />
+            )}
+            {passwordNotice && <p className="auth-notice" role="status">{passwordNotice}</p>}
             {activeView === 'attendance' ? (
                 <DailyAttendance
                     serverUrl={SERVER_URL}
@@ -266,6 +343,13 @@ function App() {
                     {isAdmin && (
                         <PeopleSection serverUrl={SERVER_URL} onPeopleChanged={() => setPeopleVersion((v) => v + 1)} />
                     )}
+                    {isAdmin && (
+                        <AccountsSection
+                            serverUrl={SERVER_URL}
+                            peopleVersion={peopleVersion}
+                            onPeopleChanged={() => setPeopleVersion((v) => v + 1)}
+                        />
+                    )}
                     {isAdmin && <BackupSection serverUrl={SERVER_URL} />}
                     {isAdmin && <UserManagement serverUrl={SERVER_URL} currentUsername={user} />}
                 </>
@@ -284,7 +368,7 @@ function App() {
     )
 }
 
-function LoginForm({ onSuccess, onSwitchRegister }) {
+function LoginForm({ onSuccess, onSwitchRegister, signupOpen }) {
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
     const [error, setError] = useState(null)
@@ -348,17 +432,22 @@ function LoginForm({ onSuccess, onSwitchRegister }) {
                 </button>
             </form>
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <button type="button" className="auth-link" onClick={onSwitchRegister}>
-                Need an account? Register
-            </button>
+            {signupOpen ? (
+                <button type="button" className="auth-link" onClick={onSwitchRegister}>
+                    Need an account? Register
+                </button>
+            ) : (
+                <p className="auth-hint">No account yet? Ask an admin to create one for you.</p>
+            )}
         </div>
     )
 }
 
-function RegisterForm({ onSuccess, onSwitchLogin }) {
+function RegisterForm({ onSuccess, onSwitchLogin, departments, defaultDepartment }) {
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
     const [confirmPassword, setConfirmPassword] = useState('')
+    const [requestedDepartment, setRequestedDepartment] = useState('') // '' = no request
     const [error, setError] = useState(null)
     const [loading, setLoading] = useState(false)
 
@@ -375,14 +464,14 @@ function RegisterForm({ onSuccess, onSwitchLogin }) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
-                body: JSON.stringify({ username, password, confirmPassword }),
+                body: JSON.stringify({ username, password, confirmPassword, department: requestedDepartment }),
             }) 
             const data = await response.json()
             if (!response.ok) {
                 setError(data.error || `HTTP ${response.status}`)
                 return
             }
-            onSuccess()
+            onSuccess(Boolean(requestedDepartment))
         } catch (err) {
             console.error('Register request failed:', err)
             setError('Could not reach the server.')
@@ -430,6 +519,22 @@ function RegisterForm({ onSuccess, onSwitchLogin }) {
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         required
                     />
+                </div>
+                <div className="auth-field">
+                    <label htmlFor="register-department">Department (optional)</label>
+                    <select
+                        id="register-department"
+                        value={requestedDepartment}
+                        onChange={(e) => setRequestedDepartment(e.target.value)}
+                    >
+                        <option value="">No request ({defaultDepartment})</option>
+                        {departments.map((d) => (
+                            <option key={d} value={d}>
+                                {d}
+                            </option>
+                        ))}
+                    </select>
+                    <small>Confirmed by an admin.</small>
                 </div>
                 <button type="submit" className="evaluate-btn" disabled={loading}>
                     {loading ? 'Creating account…' : 'Register'}

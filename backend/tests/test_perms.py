@@ -15,17 +15,21 @@ ADMIN_ONLY = [
     ("PUT", "/api/attendance", "/api/attendance", BODY_PUT_ATTENDANCE),
     ("GET", "/api/attendance", "/api/attendance?date=2026-10-13", None),
     ("GET", "/api/export/attendance.csv", "/api/export/attendance.csv", None),
-]
-
-# Open to any logged-in user. /api/predict, /api/evaluate and /api/people are here on purpose for now:
-# the roadmap makes the first two admin-only. When that happens, move them up and this file tells you.
-ANY_LOGIN = [
-    ("GET", "/api/me", "/api/me", None),
-    ("POST", "/api/logout", "/api/logout", None),
-    ("GET", "/api/departments", "/api/departments", None),
     ("GET", "/api/people", "/api/people", None),
     ("GET", "/api/predict", "/api/predict?date=2030-01-07", None),
     ("GET", "/api/evaluate", "/api/evaluate", None),
+    ("POST", "/api/users/<int:user_id>/password", "/api/users/{bob}/password", {"password": "temporary-pass"}),
+    ("POST", "/api/users/bulk", "/api/users/bulk", {"person_ids": [1]}),
+    ("POST", "/api/users/<int:user_id>/department-request", "/api/users/{bob}/department-request", {"action": "dismiss"}),
+]
+
+# Open to any logged-in user. Everyone's names and predictions are admin-only (see ADMIN_ONLY above); what is left
+# here is a user's own page: who they are, today's date, their own attendance and the head-count.
+ANY_LOGIN = [
+    ("GET", "/api/me", "/api/me", None),
+    ("POST", "/api/me/password", "/api/me/password", {"current_password": "password123", "new_password": "another-pass1"}),
+    ("POST", "/api/logout", "/api/logout", None),
+    ("GET", "/api/departments", "/api/departments", None),
     ("GET", "/api/today", "/api/today", None),
     ("GET", "/api/me/attendance", "/api/me/attendance", None),
     ("GET", "/api/attendance/summary", "/api/attendance/summary", None),
@@ -37,7 +41,8 @@ OWN_ATTENDANCE = ("PUT", "/api/me/attendance", "/api/me/attendance", {"status": 
 
 PUBLIC = [
     ("POST", "/api/login"),
-    ("POST", "/api/register"),
+    ("POST", "/api/register"),             # answers 403 unless sign-up is open (test_auth.py)
+    ("GET", "/api/auth/options"),
 ]
 
 
@@ -105,6 +110,7 @@ def test_a_refused_non_admin_changes_nothing(world):
 def test_an_admin_made_by_registration_is_impossible(flask_app):
     from users import User
 
+    flask_app.config["ALLOW_REGISTRATION"] = True
     client = flask_app.test_client()
     client.post("/api/register", json={"username": "sneaky", "password": "password123",
                                        "confirmPassword": "password123", "is_admin": True})
@@ -112,15 +118,34 @@ def test_an_admin_made_by_registration_is_impossible(flask_app):
         assert User.query.filter_by(username="sneaky").one().is_admin is False
 
 
-def test_only_admins_see_who_is_linked_to_whom(world):
-    for_admin = login(world.app, "admin").get("/api/people").get_json()
-    for_user = login(world.app, "alice").get("/api/people").get_json()
-    ana_admin = next(p for p in for_admin if p["name"] == "Ana")
-    assert ana_admin["user_id"] == world.users["alice"]
-    assert all("user_id" not in p for p in for_user)
+def test_admins_see_who_is_linked_to_whom(world):
+    people = login(world.app, "admin").get("/api/people").get_json()
+    assert next(p for p in people if p["name"] == "Ana")["user_id"] == world.users["alice"]
+    assert next(p for p in people if p["name"] == "Ben")["user_id"] is None
+
+
+def test_a_user_cannot_read_anyones_name_or_prediction(world):
+    """The roster, the predictions and the accuracy report all name people, so none may leak to a non-admin,
+    not even in the error body. (alice is linked to Ana, so her own name is the one that must stay out too.)"""
+    from conftest import make_record
+    from datetime import date, timedelta
+
+    start = date(2026, 8, 31)
+    for week in range(3):                                   # enough history that predictions exist
+        for offset in range(5):
+            make_record(world.app, world.people["Ana"], start + timedelta(days=7 * week + offset), 1)
+    client = login(world.app, "alice")
+    for url in ("/api/people", "/api/predict?date=2030-01-07", "/api/evaluate"):
+        response = client.get(url)
+        assert response.status_code == 403, url
+        body = response.get_data(as_text=True)
+        assert not any(name in body for name in ("Ana", "Ben", "Cai", "Finance", "Manpower")), url
+    admin = login(world.app, "admin")
+    assert "Ana" in admin.get("/api/predict?date=2030-01-07").get_data(as_text=True)    # the data exists, and the 403 hid it
 
 
 def test_user_list_never_contains_password_hashes(world):
-    body = login(world.app, "admin").get("/api/users").get_data(as_text=True)
-    assert "password" not in body
-    assert "pbkdf2" not in body and "scrypt" not in body
+    response = login(world.app, "admin").get("/api/users")
+    assert all("password" not in entry for entry in response.get_json())     # no field of that name
+    body = response.get_data(as_text=True)
+    assert "pbkdf2" not in body and "scrypt" not in body                     # and no hash in any value

@@ -251,8 +251,28 @@
   line-height: 1.35;
   margin-bottom: 1rem;
 }
-
+/* "Showing 3 of 50" under the filter bar on the Predictions page */
 .filter-summary {
     margin: 0.5rem 0 0;
     opacity: 0.75;
+}
+/* Auth section */
+/* Change password and Log out, side by side in the top bar */
+.auth-bar-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.auth-hint {
+  margin: 0;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+.auth-field select {
+  padding: 0.5rem;
+  font-size: 1rem;
+  border-radius: 8px;
+  border: 1px solid #2b2b2b;
 }

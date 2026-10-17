@@ -44,6 +44,7 @@ def startup(flask_app, appmod):
         appmod.ensure_attendance_schema()
         appmod.ensure_person_department()
         appmod.ensure_user_person_link()
+        appmod.ensure_user_account_columns()
 
 
 def columns(flask_app, table):
@@ -141,6 +142,19 @@ def test_the_added_link_column_still_enforces_one_login_per_person(old_db, appmo
             "UPDATE user SET person_id = 1 WHERE username = 'a'")
     with pytest.raises(IntegrityError):
         run_sql(old_db, "UPDATE user SET person_id = 1 WHERE username = 'b'")
+
+
+# ---- user.must_change_password and user.requested_department ---------------------------------------
+
+def test_the_account_columns_are_added_and_nobody_is_forced_to_change_a_password(old_db, appmod):
+    run_sql(old_db,
+            "CREATE TABLE user (id INTEGER PRIMARY KEY, username VARCHAR(80) NOT NULL UNIQUE, "
+            "password VARCHAR(255) NOT NULL, is_admin BOOLEAN NOT NULL, person_id INTEGER)",
+            "INSERT INTO user (username, password, is_admin) VALUES ('old_admin', 'hash-1', 1), ('old_user', 'hash-2', 0)")
+    startup(old_db, appmod)
+    rows = query(old_db, "SELECT username, password, is_admin, must_change_password, requested_department FROM user ORDER BY username")
+    assert rows == [("old_admin", "hash-1", 1, 0, None), ("old_user", "hash-2", 0, 0, None)]
+    assert {"must_change_password", "requested_department"} <= set(columns(old_db, "user"))
 
 
 # ---- attendance_record ---------------------------------------------------------------------------

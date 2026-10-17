@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 .env
+documentation/
 backend/data/attendance.csv
 backend/instance/
 backend/attendance.db
