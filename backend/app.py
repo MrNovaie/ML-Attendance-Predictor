@@ -342,7 +342,7 @@ def create_app() -> Flask:
         if not app.config["ALLOW_REGISTRATION"]:
             return jsonify(code=403, error="Sign-up is closed. Ask an admin to create your account."), 403
         body = request.get_json(silent=True) or {}
-        username = body.get("username").strip()
+        username = body.get("username")
         password = body.get("password")
         confirmPassword = body.get("confirmPassword")
         if not isinstance(username, str) or not username or not password or not confirmPassword:

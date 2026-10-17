@@ -32,6 +32,11 @@ ANY_LOGIN = [
     ("GET", "/api/departments", "/api/departments", None),
     ("GET", "/api/today", "/api/today", None),
     ("GET", "/api/me/attendance", "/api/me/attendance", None),
+]
+
+# The head-count is for admins and for logins linked to a person. A login with no person behind it (never linked,
+# or its person was removed) gets 403.
+LINKED_OR_ADMIN = [
     ("GET", "/api/attendance/summary", "/api/attendance/summary", None),
 ]
 
@@ -47,7 +52,8 @@ PUBLIC = [
 
 
 def call(client, method, url, body, world):
-    url = url.format(bob=world.users["bob"])
+    # replace, not str.format: any other brace in a URL (say a {day} placeholder) is left alone instead of raising KeyError
+    url = url.replace("{bob}", str(world.users["bob"]))
     return client.open(url, method=method, json=body)
 
 
@@ -57,13 +63,13 @@ def test_every_route_is_in_the_table(flask_app):
         for rule in flask_app.url_map.iter_rules() if rule.rule.startswith("/api/")
         for method in rule.methods - {"HEAD", "OPTIONS"}
     }
-    listed = {(m, route) for m, route, _, _ in ADMIN_ONLY + ANY_LOGIN + [OWN_ATTENDANCE]} | set(PUBLIC)
+    listed = {(m, route) for m, route, _, _ in ADMIN_ONLY + ANY_LOGIN + LINKED_OR_ADMIN + [OWN_ATTENDANCE]} | set(PUBLIC)
     assert registered == listed, (
         f"not in the table: {sorted(registered - listed)}; in the table but not registered: {sorted(listed - registered)}"
     )
 
 
-@pytest.mark.parametrize("method,route,url,body", ADMIN_ONLY + ANY_LOGIN + [OWN_ATTENDANCE],
+@pytest.mark.parametrize("method,route,url,body", ADMIN_ONLY + ANY_LOGIN + LINKED_OR_ADMIN + [OWN_ATTENDANCE],
                          ids=lambda v: v if isinstance(v, str) else "")
 def test_anonymous_gets_401(world, method, route, url, body):
     response = call(login(world.app), method, url, body, world)
@@ -89,6 +95,20 @@ def test_admin_is_let_through_admin_routes(world, method, route, url, body):
 def test_any_login_is_let_through(world, who, method, route, url, body):
     response = call(login(world.app, who), method, url, body, world)
     assert response.status_code not in (401, 403), f"{who}: {response.get_data(as_text=True)}"
+
+
+@pytest.mark.parametrize("method,route,url,body", LINKED_OR_ADMIN, ids=lambda v: v if isinstance(v, str) else "")
+@pytest.mark.parametrize("who", ["alice", "admin"])      # alice is linked to Ana
+def test_linked_logins_and_admins_are_let_through_the_head_count(world, who, method, route, url, body):
+    response = call(login(world.app, who), method, url, body, world)
+    assert response.status_code == 200, f"{who}: {response.get_data(as_text=True)}"
+
+
+@pytest.mark.parametrize("method,route,url,body", LINKED_OR_ADMIN, ids=lambda v: v if isinstance(v, str) else "")
+def test_a_login_with_no_person_gets_403_on_the_head_count(world, method, route, url, body):
+    response = call(login(world.app, "bob"), method, url, body, world)      # bob is not linked
+    assert response.status_code == 403
+    assert "total" not in response.get_data(as_text=True)
 
 
 def test_a_refused_non_admin_changes_nothing(world):
@@ -141,7 +161,7 @@ def test_a_user_cannot_read_anyones_name_or_prediction(world):
         body = response.get_data(as_text=True)
         assert not any(name in body for name in ("Ana", "Ben", "Cai", "Finance", "Manpower")), url
     admin = login(world.app, "admin")
-    assert "Ana" in admin.get("/api/predict?date=2030-01-07").get_data(as_text=True)    # the data exists, and the 403 hid it
+    assert "Ana" in admin.get("/api/predict?date=2030-01-07").get_data(as_text=True)    # the data exists, so the 403 is what hid it
 
 
 def test_user_list_never_contains_password_hashes(world):
