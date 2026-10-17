@@ -32,7 +32,7 @@ def predict(client, day):
 
 @pytest.fixture
 def user(world):
-    return login(world.app, "alice")
+    return login(world.app, "admin")
 
 
 def test_no_data_means_no_predictions(user):
