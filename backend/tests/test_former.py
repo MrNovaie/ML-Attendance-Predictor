@@ -7,7 +7,7 @@ import pytest
 
 from conftest import login, make_record
 
-from test_predict import MONDAY, history
+from test_preds import MONDAY, history
 
 
 @pytest.fixture
