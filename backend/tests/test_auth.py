@@ -1,4 +1,4 @@
-"""Login, logout, registration and account management."""
+"""Login, logout, sign-up and account management."""
 import pytest
 
 from conftest import PASSWORD, login
@@ -30,7 +30,7 @@ def test_logout_ends_the_session(world):
     assert client.get("/api/me").status_code == 401
 
 
-# ---- registration --------------------------------------------------------------------------------
+# ---- sign-up (closed unless ALLOW_REGISTRATION is set) --------------------------------------------
 
 def register(client, **overrides):
     body = {"username": "newbie", "password": "password123", "confirmPassword": "password123"}
@@ -38,9 +38,40 @@ def register(client, **overrides):
     return client.post("/api/register", json=body)
 
 
-def test_registration_makes_an_unlinked_non_admin_login_with_a_hashed_password(flask_app):
+@pytest.fixture
+def open_signup(flask_app):
+    flask_app.config["ALLOW_REGISTRATION"] = True
+    return flask_app
+
+
+def test_signup_is_closed_by_default_and_creates_nothing(flask_app):
     from users import User
 
+    response = register(flask_app.test_client())
+    assert response.status_code == 403 and "closed" in response.get_json()["error"]
+    with flask_app.app_context():
+        assert User.query.count() == 0
+
+
+def test_the_setting_opens_signup_from_the_environment(monkeypatch, make_app):
+    monkeypatch.setenv("ALLOW_REGISTRATION", "true")
+    assert register(make_app("opened").test_client()).status_code == 200
+    monkeypatch.setenv("ALLOW_REGISTRATION", "no")
+    assert register(make_app("closed").test_client(), username="other").status_code == 403
+
+
+def test_the_login_screen_can_ask_whether_signup_is_open(flask_app):
+    closed = flask_app.test_client().get("/api/auth/options").get_json()
+    assert closed == {"registration_open": False, "departments": [], "default_department": "Holding"}
+    flask_app.config["ALLOW_REGISTRATION"] = True
+    opened = flask_app.test_client().get("/api/auth/options").get_json()
+    assert opened["registration_open"] is True and "Finance" in opened["departments"] and "Holding" in opened["departments"]
+
+
+def test_registration_makes_an_unlinked_non_admin_login_with_a_hashed_password(open_signup):
+    from users import User
+
+    flask_app = open_signup
     assert register(flask_app.test_client()).status_code == 200
     with flask_app.app_context():
         user = User.query.filter_by(username="newbie").one()
@@ -49,9 +80,10 @@ def test_registration_makes_an_unlinked_non_admin_login_with_a_hashed_password(f
     assert login(flask_app, "newbie").get("/api/me").status_code == 200
 
 
-def test_registration_trims_the_username(flask_app):
+def test_registration_trims_the_username(open_signup):
     from users import User
 
+    flask_app = open_signup
     register(flask_app.test_client(), username="  zed  ")
     with flask_app.app_context():
         assert User.query.filter_by(username="zed").count() == 1
@@ -61,17 +93,44 @@ def test_registration_trims_the_username(flask_app):
     {"username": ""}, {"username": "   "}, {"password": ""}, {"confirmPassword": ""},
     {"password": "short", "confirmPassword": "short"},       # under 8 characters
     {"confirmPassword": "different123"},                     # does not match
-], ids=["no-name", "blank-name", "no-password", "no-confirm", "too-short", "mismatch"])
-def test_registration_rejects_bad_input(flask_app, overrides):
+    {"username": 5}, {"username": "x" * 81},                 # not text / longer than the column
+    {"password": "p" * 129, "confirmPassword": "p" * 129},   # longer than a password may be
+    {"department": "Narnia"}, {"department": 7},             # not one of the departments / not text
+], ids=["no-name", "blank-name", "no-password", "no-confirm", "too-short", "mismatch",
+        "name-not-text", "name-too-long", "password-too-long", "unknown-department", "department-not-text"])
+def test_registration_rejects_bad_input(open_signup, overrides):
     from users import User
 
+    flask_app = open_signup
     assert register(flask_app.test_client(), **overrides).status_code == 400
     with flask_app.app_context():
         assert User.query.count() == 0
 
 
 def test_registration_rejects_a_taken_username(world):
+    world.app.config["ALLOW_REGISTRATION"] = True
     assert register(world.app.test_client(), username="alice").status_code == 400
+
+
+def test_a_department_request_is_stored_with_the_login_and_no_person_is_made(world):
+    from users import Person, User
+
+    world.app.config["ALLOW_REGISTRATION"] = True
+    assert register(world.app.test_client(), department="Finance").status_code == 200
+    with world.app.app_context():
+        user = User.query.filter_by(username="newbie").one()
+        assert user.requested_department == "Finance" and user.person_id is None
+        assert Person.query.count() == 3                         # nobody was added to the roster
+
+
+def test_no_department_means_no_request(world):
+    from users import User
+
+    world.app.config["ALLOW_REGISTRATION"] = True
+    register(world.app.test_client(), department="   ")
+    register(world.app.test_client(), username="other")
+    with world.app.app_context():
+        assert User.query.filter(User.username.in_(["newbie", "other"])).filter(User.requested_department.isnot(None)).count() == 0
 
 
 # ---- admin account management --------------------------------------------------------------------
