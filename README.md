@@ -67,6 +67,7 @@ attendance_tracker_app/
 │   │   ├── test_summary.py          # the head-count
 │   │   ├── test_preds.py          # predictions and evaluation
 │   │   ├── test_schema.py           # database rules and startup migrations
+│   │   ├── test_lastadm.py
 │   │   ├── test_logs.py             # the log itself: hash, chain, append-only triggers, verify_chain, anchor
 │   │   ├── test_log_routes.py       # every admin route and command writes the right log rows (and none when it fails)
 │   │   └── test_backup.py           # export / restore tests

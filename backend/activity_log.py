@@ -177,3 +177,103 @@ def ensure_activity_log() -> None:
                 f"CREATE TRIGGER IF NOT EXISTS activity_log_no_{event.lower()} BEFORE {event} ON activity_log "
                 "BEGIN SELECT RAISE(ABORT, 'activity_log is append-only'); END"
             ))
+
+def _split_attendance(value):
+    """'2026-10-14 Partial Day' -> ('2026-10-14', 'Partial Day'). Anything else -> (value, None)."""
+    if value is None:
+        return None, None
+    day, _, status = value.partition(" ")
+    return day, status or None
+
+
+def _attendance_set(who, row):
+    day, status = _split_attendance(row.new_value)
+    _, was = _split_attendance(row.old_value)
+    text = f"{who} set {row.person_name} to {status} on {day}"
+    return f"{text} (was {was})" if was else f"{text} (no record before)"
+
+
+def _attendance_removed(who, row):
+    day, was = _split_attendance(row.old_value)
+    return f"{who} removed {row.person_name}'s record for {day} (was {was})"
+
+
+def _person_removed(who, row):
+    text = f"{who} removed {row.person_name}"
+    return f"{text} and unlinked login {row.login_name}" if row.login_name else text
+
+
+def _person_restored(who, row):
+    return f"{who} restored {row.person_name}"
+
+
+def _login_created(who, row):
+    text = f"{who} created the {row.new_value} login {row.login_name}"
+    return f"{text} for {row.person_name}" if row.person_name else text
+
+
+def _login_deleted(who, row):
+    text = f"{who} deleted the {row.old_value} login {row.login_name}"
+    return f"{text} (it was linked to {row.person_name})" if row.person_name else text
+
+
+def _login_linked(who, row):
+    text = f"{who} linked login {row.login_name} to {row.person_name}"
+    return f"{text} (it was linked to {row.old_value})" if row.old_value else text
+
+
+def _password_reset(who, row):
+    text = f"{who} reset the password of login {row.login_name}"
+    return f"{text} ({row.person_name})" if row.person_name else text
+
+
+def _backup_restored(who, row):
+    text = f"{who} restored a backup"
+    if row.new_value:
+        text += f": {row.new_value}"
+    return f"{text} (replaced existing data)" if row.old_value else text
+
+
+SENTENCES = {
+    "person_added":       "{who} added {person} to {new}",
+    "person_renamed":     "{who} renamed {old} to {new}",
+    "department_changed": "{who} moved {person} from {old} to {new}",
+    "login_unlinked":     "{who} unlinked login {login} from {old}",
+    "department_request_confirmed": "{who} approved the request from login {login} to move {person} from {old} to {new}",
+    "department_request_dismissed": "{who} dismissed the request from login {login} to move {person} to {old}",
+}
+
+# Actions that need a few lines of code because a value may be missing or must be split first.
+BUILDERS = {
+    "attendance_set": _attendance_set,
+    "attendance_removed": _attendance_removed,
+    "person_removed": _person_removed,
+    "person_restored": _person_restored,
+    "login_created": _login_created,
+    "login_deleted": _login_deleted,
+    "login_linked": _login_linked,
+    "password_reset": _password_reset,
+    "backup_restored": _backup_restored,
+}
+
+KNOWN_ACTIONS = frozenset(SENTENCES) | frozenset(BUILDERS)
+
+
+def describe(row) -> str:
+    """One readable line for a log row (anything with the ActivityLog columns as attributes).
+
+    An action this code does not know yet still gets a line, so the page never breaks on a newer log.
+    """
+    who = row.admin_name
+    action = row.action
+    if action in BUILDERS:
+        return BUILDERS[action](who, row)
+    if action in SENTENCES:
+        return SENTENCES[action].format(who=who, person=row.person_name, login=row.login_name,
+                                        old=row.old_value, new=row.new_value)
+    parts = [f"{who} did {action}"]
+    if row.person_name:
+        parts.append(f"on {row.person_name}")
+    if row.login_name:
+        parts.append(f"(login {row.login_name})")
+    return " ".join(parts)

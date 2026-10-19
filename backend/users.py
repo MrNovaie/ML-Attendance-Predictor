@@ -20,8 +20,8 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default = False, nullable = False)
     # True = an admin created the login or reset its password. False = the user has picked their own password and can do anything else.
     must_change_password = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
-    # The department someone asked for when they signed up (only when sign-up is open). Sent to admin as a request:
-    # They confirm it (it then becomes the linked person's department) or dismisses it.
+    # The department someone asked for when they signed up (only when sign-up is open). Sent to admin as a request.
+    # Admin confirms it (it then becomes the linked person's department) or dismisses it.
     requested_department = db.Column(db.String(80), nullable=True)
 
     def session_fingerprint(self) -> str:
@@ -35,7 +35,7 @@ class User(UserMixin, db.Model):
     def __repr__(self):
         return f"<User {self.username}>"
 
-
+# A Person may not be a User, though typically Users are linked to Persons. Persons are the ones getting predicted.
 class Person(db.Model):
     __tablename__ = 'person'
     id = db.Column(db.Integer, primary_key=True)
@@ -48,7 +48,7 @@ class Person(db.Model):
     )
     # A former person has been "removed" by an admin: they stay in the database with all their attendance
     # (so history and backups are intact) but drop out of the board, predictions, head-counts and new logins.
-    # An admin can restore them. Nothing here is ever deleted by removing a person.
+    # An admin can restore them. 
     former = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     attendance_records = db.relationship('AttendanceRecord', backref='person', lazy=True)
 

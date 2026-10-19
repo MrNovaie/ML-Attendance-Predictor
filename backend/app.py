@@ -334,7 +334,7 @@ def create_app() -> Flask:
                 return jsonify(code=200, status="success", message="Logged in successfully")
             except Exception:
                 logger.exception("Failed to login user: %s", username)
-                return jsonify(code=500, error="Internal server error"), 500
+                return jsonify(code=500, error="Internal server error."), 500
         else:
             return jsonify(code=401, error="Invalid username or password"), 401
     @app.route("/api/logout", methods=["POST"])
@@ -345,7 +345,7 @@ def create_app() -> Flask:
             return jsonify(code=200, status="success", message="Logged out successfully")
         except Exception:
             logger.exception("Failed to logout user: %s", current_user.username)
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error."), 500
         
     
     @login_manager.user_loader
@@ -413,7 +413,7 @@ def create_app() -> Flask:
             # we never echo internals (table names, integrity errors, etc.).
             db.session.rollback()
             logger.exception("Failed to create user: %s", username)
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error."), 500
         return jsonify(code=200, status="success", message="User created successfully")
 
     @app.get("/api/me")
@@ -443,7 +443,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to change password for user id=%s", current_user.id)
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error."), 500
         login_user(user)  # new session id (the password is part of it); every other browser is logged out
         return jsonify(code=200, status="success", message="Password changed")
 
@@ -568,7 +568,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to create user: %s", username)
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error."), 500
 
         return jsonify(code=201, status="success", id=user.id, username=user.username), 201
 
@@ -599,7 +599,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to reset password for user id=%s", user_id)
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error."), 500
         return jsonify(code=200, status="success", username=user.username,
                        temporary_password=password, generated=generated)
 
@@ -652,7 +652,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to create logins in bulk")
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error."), 500
         return jsonify(code=201, status="success", created=created), 201
 
     @app.post("/api/users/<int:user_id>/department-request")
@@ -689,7 +689,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to answer department request of user id=%s", user_id)
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error."), 500
         return jsonify(code=200, status="success", action=action, department=requested)
 
     @app.delete("/api/users/<int:user_id>") #DELETES users from API
@@ -698,25 +698,27 @@ def create_app() -> Flask:
     def remove_user(user_id: int):
         if user_id == current_user.id:
             return jsonify(code=400, error="You cannot delete your own account"), 400
-
         user = db.session.get(User, user_id)
         if user is None:
             return jsonify(code=404, error="User not found"), 404
-
-        # Copies taken first: the log keeps who and what was removed after the rows themselves are gone.
         login_copy = SimpleNamespace(id=user.id, username=user.username)
         person = person_of(user)
         person_copy = None if person is None else SimpleNamespace(id=person.id, name=person.name)
         role = "admin" if user.is_admin else "user"
         try:
             db.session.delete(user)
+            db.session.flush()
+            admins_left = User.query.filter_by(is_admin=True).count()
+            if admins_left <= 0:
+                db.session.rollback()
+                return jsonify(code=409, error="There must be at least one admin."), 409
             log_admin("login_deleted", login=login_copy, person=person_copy, old=role)
             db.session.commit()
         except Exception:
             db.session.rollback()
             #code to update latest modification
             logger.exception("Failed to delete user id=%s", user_id)
-            return jsonify(code=500, error="Internal server error"), 500
+            return jsonify(code=500, error="Internal server error.."), 500
 
         return jsonify(code=200, status="success", message="User removed")
 
@@ -750,7 +752,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to create person: %s", name)
-            return jsonify(error="Internal server error"), 500
+            return jsonify(error="Internal server error."), 500
         return jsonify(id=person.id, name=person.name, department=person.department, former=False), 201
 
     @app.patch("/api/people/<int:person_id>")
@@ -859,7 +861,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to update person id=%s", person_id)
-            return jsonify(error="Internal server error"), 500
+            return jsonify(error="Internal server error."), 500
 
         if renamed or will_be_former != was_former:
             # The models are keyed by name and trained only on active people; neither change touches updated_at.
@@ -953,7 +955,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to save attendance for %s", day)
-            return jsonify(error="Internal server error"), 500
+            return jsonify(error="Internal server error."), 500
 
         if removed:
             # Deleting a row does not touch updated_at, so the model cache would never notice.
@@ -1048,7 +1050,7 @@ def create_app() -> Flask:
         except Exception:
             db.session.rollback()
             logger.exception("Failed to save self-service attendance for person id=%s", person.id)
-            return jsonify(error="Internal server error"), 500
+            return jsonify(error="Internal server error."), 500
         return jsonify(status="success", date=day.isoformat(), attendance=status)
 
     @app.get("/api/attendance/summary")
@@ -1129,6 +1131,58 @@ def create_app() -> Flask:
         click.echo(f"Restored {result['people']} people and {result['records']} attendance records.")
         click.echo("Logins are not part of a backup: create them again under Accounts (or link existing ones under People).")
 
+    '''Logging'''
+    def _log_day_argument(name):
+        """The ?from= / ?to= argument as a date, or None when it is absent. Raises ValueError for anything else."""
+        raw = (request.args.get(name) or "").strip()
+        return date.fromisoformat(raw) if raw else None
+ 
+    @app.get("/api/activity-log")
+    @login_required
+    @admin_required
+    def activity_log_list():
+        """Newest first. Filters (all optional): admin, person (contains), action, from, to (inclusive days).
+        Paging: ?before=<seq> returns rows older than that seq; `more` says whether another page exists."""
+        Log = activity_log.ActivityLog
+        query = Log.query
+ 
+        admin = (request.args.get("admin") or "").strip()
+        if admin:
+            query = query.filter(Log.admin_name == admin)       # the stored copy, so it works after the login is gone
+ 
+        person = (request.args.get("person") or "").strip()
+        if person:
+            escaped = person.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")   # typed % and _ mean themselves
+            query = query.filter(Log.person_name.ilike(f"%{escaped}%", escape="\\"))
+ 
+        action = (request.args.get("action") or "").strip()
+        if action:
+            query = query.filter(Log.action == action)
+ 
+        try:
+            day_from = _log_day_argument("from")
+            day_to = _log_day_argument("to")
+        except ValueError:
+            return jsonify(code=400, error="Dates must look like 2026-10-14"), 400
+        # logged_at is text like "2026-10-14T11:00:00+08:00": same offset on every row, date first, so text order is time order
+        if day_from:
+            query = query.filter(Log.logged_at >= day_from.isoformat())
+        if day_to:
+            query = query.filter(Log.logged_at < (day_to + timedelta(days=1)).isoformat())   # all of that day
+ 
+        before = request.args.get("before", type=int)
+        if before:
+            query = query.filter(Log.seq < before)
+        limit = max(1, min(request.args.get("limit", 100, type=int), 500))
+ 
+        rows = query.order_by(Log.seq.desc()).limit(limit + 1).all()       # one extra row tells us there is a next page
+        more = len(rows) > limit
+        rows = rows[:limit]
+        return jsonify(entries=[{
+            "seq": r.seq, "logged_at": r.logged_at, "admin": r.admin_name, "action": r.action,
+            "text": activity_log.describe(r),
+            "person": r.person_name, "login": r.login_name, "old": r.old_value, "new": r.new_value
+        } for r in rows], more=more)
     return app
 
     
