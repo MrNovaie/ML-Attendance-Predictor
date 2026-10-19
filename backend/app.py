@@ -7,12 +7,14 @@ import re
 import secrets
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from flask_login import login_user, login_required, logout_user, current_user
 from functools import wraps
 from extensions import db, login_manager
+import activity_log   # also registers the activity_log table, so db.create_all() creates it
 import backup
 from import_csv import import_csv
 from ml import input_to_date, get_name_list, load_data, predict_all_for_date, evaluate_all, invalidate_models
@@ -101,6 +103,24 @@ def username_from_name(name: str, taken: set) -> str:
 
 def department_of(person) -> str:
     return (person.department or "").strip() or DEFAULT_DEPARTMENT
+
+
+def person_of(user):
+    """The person a login is linked to, or None."""
+    return db.session.get(Person, user.person_id) if user.person_id else None
+
+
+def log_admin(action, *, person=None, login=None, old=None, new=None) -> None:
+    """Write one row to the activity log for the logged-in admin, inside the current transaction.
+    The row is saved together with the change, or thrown away with it. 
+    Never pass a password or a password hash as old or new.
+    """
+    activity_log.append_entry(current_user, action, now_local(), person=person, login=login, old=old, new=new)
+
+
+def log_system(action, *, person=None, login=None, old=None, new=None) -> None:
+    """For the command line, where there is no logged-in admin: the row says the system did it."""
+    activity_log.append_entry(None, action, now_local(), person=person, login=login, old=old, new=new)
 
 
 def ensure_attendance_schema() -> None:
@@ -482,6 +502,7 @@ def create_app() -> Flask:
                     password=generate_password_hash(password),
                     is_admin=True)
         db.session.add(user)
+        log_system("login_created", login=user, new="admin")
         db.session.commit()
         click.echo(f"Admin '{username}' created.")
 
@@ -498,6 +519,7 @@ def create_app() -> Flask:
             raise click.ClickException(problem)
         user.password = generate_password_hash(password)
         user.must_change_password = False
+        log_system("password_reset", login=user, person=person_of(user))   # never the password itself
         db.session.commit()
         click.echo(f"Password for '{user.username}' changed.")
 
@@ -538,6 +560,7 @@ def create_app() -> Flask:
         )
         try:
             db.session.add(user)
+            log_admin("login_created", login=user, new="admin" if is_admin else "user")
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
@@ -571,6 +594,7 @@ def create_app() -> Flask:
         try:
             user.password = generate_password_hash(password)
             user.must_change_password = True
+            log_admin("password_reset", login=user, person=person_of(user))   # never the password itself
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -586,7 +610,7 @@ def create_app() -> Flask:
         """One login per chosen person, linked to them, with a generated temporary password each.
 
         All or nothing: a person who already has a login, or an unknown person, stops the whole batch.
-        The passwords are in this response only, so the admin has to hand them out (or download them) now.
+        The passwords are in this response only, so the admin has to hand them out (or download them).
         """
         body = request.get_json(silent=True) or {}
         ids = body.get("person_ids")
@@ -615,8 +639,10 @@ def create_app() -> Flask:
             for person in sorted(people.values(), key=lambda p: p.name.lower()):
                 username = username_from_name(person.name, taken)
                 temporary = make_temporary_password()
-                db.session.add(User(username=username, password=generate_password_hash(temporary), is_admin=False,
-                                    person_id=person.id, must_change_password=True))
+                new_user = User(username=username, password=generate_password_hash(temporary), is_admin=False,
+                                person_id=person.id, must_change_password=True)
+                db.session.add(new_user)
+                log_admin("login_created", login=new_user, person=person, new="user")
                 created.append({"person_id": person.id, "person": person.name, "username": username,
                                 "temporary_password": temporary})
             db.session.commit()
@@ -644,16 +670,21 @@ def create_app() -> Flask:
         requested = user.requested_department
         if not requested:
             return jsonify(code=409, error="This login has no pending department request."), 409
+        person = person_of(user)
         if action == "confirm":
-            person = db.session.get(Person, user.person_id) if user.person_id else None
             if person is None:
                 return jsonify(code=409, error="Link this login to a person first."), 409
             department, error = clean_department(requested)
             if error:
                 return jsonify(code=400, error=error), 400
+            old_department = person.department
             person.department = department
         user.requested_department = None
         try:
+            if action == "confirm":
+                log_admin("department_request_confirmed", person=person, login=user, old=old_department, new=department)
+            else:
+                log_admin("department_request_dismissed", person=person, login=user, old=requested)
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -672,8 +703,14 @@ def create_app() -> Flask:
         if user is None:
             return jsonify(code=404, error="User not found"), 404
 
+        # Copies taken first: the log keeps who and what was removed after the rows themselves are gone.
+        login_copy = SimpleNamespace(id=user.id, username=user.username)
+        person = person_of(user)
+        person_copy = None if person is None else SimpleNamespace(id=person.id, name=person.name)
+        role = "admin" if user.is_admin else "user"
         try:
             db.session.delete(user)
+            log_admin("login_deleted", login=login_copy, person=person_copy, old=role)
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -705,6 +742,7 @@ def create_app() -> Flask:
         person = Person(name=name, department=department)
         try:
             db.session.add(person)
+            log_admin("person_added", person=person, new=department)
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
@@ -767,8 +805,17 @@ def create_app() -> Flask:
                     return jsonify(error="User not found"), 404
 
         was_former = bool(person.former)
+        removing = will_be_former and not was_former
         renamed = new_name is not None and new_name != person.name
         unlinked_username = None
+        unlinked_login = None
+        # What the activity log needs to say what changed, taken before anything is changed.
+        old_name, old_department = person.name, person.department
+        was_linked = [SimpleNamespace(id=u.id, username=u.username) for u in User.query.filter(User.person_id == person.id)]
+        moved_from = None
+        if new_login is not None and new_login.person_id not in (None, person.id):
+            other = db.session.get(Person, new_login.person_id)
+            moved_from = other.name if other else None
         try:
             if "department" in body:
                 person.department = department
@@ -781,6 +828,7 @@ def create_app() -> Flask:
                     for old in User.query.filter(User.person_id == person.id):
                         old.person_id = None
                         unlinked_username = old.username
+                        unlinked_login = SimpleNamespace(id=old.id, username=old.username)
             if "user_id" in body:
                 # One login per person: whoever was linked before is unlinked first.
                 for old in User.query.filter(User.person_id == person.id):
@@ -789,6 +837,21 @@ def create_app() -> Flask:
                 db.session.flush()
                 if new_login is not None:
                     new_login.person_id = person.id  # moves them off any other person
+
+            # The log: one row for each thing that really changed, in this order, in the same transaction.
+            if "department" in body and department != old_department:
+                log_admin("department_changed", person=person, old=old_department, new=department)
+            if renamed:
+                log_admin("person_renamed", person=person, old=old_name, new=new_name)
+            if will_be_former != was_former:
+                log_admin("person_removed" if will_be_former else "person_restored", person=person, login=unlinked_login)
+            if "user_id" in body:
+                if not removing:   # removing someone already logged the login it unlinked
+                    for before in was_linked:
+                        if new_login is None or before.id != new_login.id:
+                            log_admin("login_unlinked", person=person, login=before, old=person.name)
+                if new_login is not None and all(before.id != new_login.id for before in was_linked):
+                    log_admin("login_linked", person=person, login=new_login, old=moved_from, new=person.name)
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
@@ -810,11 +873,11 @@ def create_app() -> Flask:
                        unlinked_username=unlinked_username)
 
     '''Updating or changing attendance'''
-    ALLOWED_STATUSES = {0, 1, 2}
+    STATUSES = {0: "Out", 1: "In", 2: "Partial Day"}
 
     def valid_status(value) -> bool:
         # type() rather than isinstance(): True/False are ints in Python and must not count as 1/0.
-        return type(value) is int and value in ALLOWED_STATUSES
+        return type(value) is int and value in STATUSES
 
     @app.put("/api/attendance")
     @login_required
@@ -846,7 +909,7 @@ def create_app() -> Flask:
         if any("status" not in e for e in entries):
             return jsonify(error="Each record needs a status (0, 1, 2, or null to remove)."), 400
         if any(e["status"] is not None and not valid_status(e["status"]) for e in entries):
-            return jsonify(error=f"status must be one of {sorted(ALLOWED_STATUSES)}, or null to remove."), 400
+            return jsonify(error=f"status must be one of {sorted(STATUSES)}, or null to remove."), 400
 
         found = {p.id: p for p in Person.query.filter(Person.id.in_(ids))}
         if ids - set(found):
@@ -857,23 +920,35 @@ def create_app() -> Flask:
                                  "Reload the page to see the current list."), 400
 
         existing = {r.person_id: r for r in AttendanceRecord.query.filter_by(date=day)}
+
+        def as_text(status):
+            """How the log writes one day's status, e.g. '2026-10-13 In'."""
+            return f"{day.isoformat()} {STATUSES[status]}"
+
         saved = removed = 0
         try:
             for e in entries:
                 pid = int(e["person_id"])
-                if e["status"] is None:
+                who, status = found[pid], e["status"]
+                if status is None:
                     if pid in existing:
+                        was = existing[pid].status
                         db.session.delete(existing[pid])
                         removed += 1
+                        log_admin("attendance_removed", person=who, old=as_text(was))
                 elif pid in existing:
-                    existing[pid].status = e["status"]
+                    was = existing[pid].status
+                    existing[pid].status = status
                     saved += 1
+                    if was != status:   # saving the same status again changes nothing, so there is nothing to log
+                        log_admin("attendance_set", person=who, old=as_text(was), new=as_text(status))
                 else:
                     db.session.add(AttendanceRecord(
                         person_id=pid, date=day,
-                        day_of_week=day.isoweekday(), status=e["status"],
+                        day_of_week=day.isoweekday(), status=status,
                     ))
                     saved += 1
+                    log_admin("attendance_set", person=who, new=as_text(status))
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -947,7 +1022,7 @@ def create_app() -> Flask:
         body = request.get_json(silent=True) or {}
         status = body.get("status")
         if not valid_status(status):
-            return jsonify(error=f"status must be one of {sorted(ALLOWED_STATUSES)}"), 400
+            return jsonify(error=f"status must be one of {sorted(STATUSES)}"), 400
         person = linked_person()
         if person is None:
             return jsonify(error="Your account isn't linked to a person yet. Ask an admin to link it."), 403
@@ -999,7 +1074,7 @@ def create_app() -> Flask:
             people_query = people_query.filter(Person.department == department)
             records_query = records_query.filter(Person.department == department)
         total = people_query.count()
-        by_status = {status: 0 for status in sorted(ALLOWED_STATUSES)}
+        by_status = {status: 0 for status in sorted(STATUSES)}
         for status, count in records_query.group_by(AttendanceRecord.status):
             by_status[status] = count
         return jsonify(
@@ -1044,9 +1119,13 @@ def create_app() -> Flask:
             click.confirm("This deletes every current person and attendance record first. Continue?", abort=True)
         try:
             with open(path, newline="", encoding="utf-8-sig") as handle:
-                result = backup.restore_csv(handle, allowed_statuses=ALLOWED_STATUSES, replace=replace)
+                result = backup.restore_csv(handle, allowed_statuses=set(STATUSES), replace=replace)
         except backup.BackupError as err:
             raise click.ClickException(str(err))
+        # Backup Step
+        log_system("backup_restored", old="replaced existing data" if replace else None,
+                   new=f"{result['people']} people, {result['records']} attendance records")
+        db.session.commit()
         click.echo(f"Restored {result['people']} people and {result['records']} attendance records.")
         click.echo("Logins are not part of a backup: create them again under Accounts (or link existing ones under People).")
 
@@ -1066,5 +1145,6 @@ if __name__ == "__main__":
         ensure_person_former()
         ensure_user_person_link()
         ensure_user_account_columns()
+        activity_log.ensure_activity_log()
         import_csv()
     app.run(debug=True, port=5000)

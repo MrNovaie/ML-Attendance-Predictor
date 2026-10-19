@@ -145,7 +145,7 @@ function UserManagement({ serverUrl, currentUsername }) {
                                     {u.username}
                                     {isSelf && <span className="user-admin-tag"> (you)</span>}
                                     {u.is_admin && <span className="user-admin-tag user-admin-tag--admin">admin</span>}
-                                    {u.must_change_password && <span className="user-admin-tag"> temporary password</span>}
+                                    {u.must_change_password && <span className="user-admin-tag">(temporary password)</span>}
                                 </span>
                                 <span className="user-admin-actions">
                                     <button
