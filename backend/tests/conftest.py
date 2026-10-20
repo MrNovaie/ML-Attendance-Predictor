@@ -157,3 +157,37 @@ def world(flask_app, add_users):
     people = make_people(flask_app, ("Ana", "Finance"), ("Ben", "Finance"), ("Cai", "Manpower"))
     link(flask_app, users["alice"], people["Ana"])
     return SimpleNamespace(app=flask_app, users=users, people=people)
+
+LOG_URL = "/api/activity-log"
+
+
+def fetch_log(app, query="", who="admin"):
+    response = login(app, who).get(LOG_URL + query)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    return response.get_json()
+
+
+def log_seqs(body):
+    return [e["seq"] for e in body["entries"]]
+
+
+@pytest.fixture
+def busy_log(world, add_users, set_clock):
+    """Four log rows by two admins over three days (all times are the office clock, UTC+8):
+       1  admin   Mon 12th 10:00  set Ana to In
+       2  boss    Tue 13th 23:30  renamed Ben to Benjamin      (late evening: still the 13th)
+       3  admin   Wed 14th 11:00  moved Cai to Finance
+       4  boss    Wed 14th 11:00  added Zed
+    """
+    add_users(("boss", True))
+    ana, ben, cai = world.people["Ana"], world.people["Ben"], world.people["Cai"]
+    admin, boss = login(world.app, "admin"), login(world.app, "boss")
+
+    set_clock("2026-10-12T02:00:00")
+    assert admin.put("/api/attendance", json={"date": "2026-10-12", "records": [{"person_id": ana, "status": 1}]}).status_code == 200
+    set_clock("2026-10-13T15:30:00")
+    assert boss.patch(f"/api/people/{ben}", json={"name": "Benjamin"}).status_code == 200
+    set_clock("2026-10-14T03:00:00")
+    assert admin.patch(f"/api/people/{cai}", json={"department": "Finance"}).status_code == 200
+    assert boss.post("/api/table_persons", json={"name": "Zed", "department": "Finance"}).status_code == 201
+    return world

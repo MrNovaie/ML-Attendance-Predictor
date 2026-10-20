@@ -1,6 +1,6 @@
-# Attendance Predictor (v0.6)
+# Attendance Predictor (v0.7, in progress)
 
-A small full-stack app that tracks weekday attendance and predicts it from historical records. Each person gets a **Categorical Naive Bayes** model trained on past **day-of-week → status** patterns. Admins see predictions, confidence scores and optional holdout accuracy metrics. A **Today's Attendance** page lets admins drag names into In / Partial Day / Out, and lets each user set their own status each morning before a daily cutoff. Admins can also record past days, add people, create logins (one by one or for many people at once), reset passwords, link logins to people and download a backup, all in the app. Every admin change is recorded in a tamper-evident activity log.
+A small full-stack app that tracks weekday attendance and predicts it from historical records. Each person gets a **Categorical Naive Bayes** model trained on past **day-of-week → status** patterns. Admins see predictions, confidence scores and optional holdout accuracy metrics. A **Today's Attendance** page lets admins drag names into In / Partial Day / Out, and lets each user set their own status each morning before a daily cutoff. Admins can also record past days, add people, create logins (one by one or for many people at once), reset passwords, link logins to people and download a backup, all in the app. Every admin change is recorded in a tamper-evident activity log that admins can read, filter, check and download in the app.
 
 **Status:** personal / learning project — not hardened for public production deployment.
 
@@ -25,9 +25,10 @@ A small full-stack app that tracks weekday attendance and predicts it from histo
 - **In-app attendance entry** for any past weekday — record or correct each person's status (admin)
 - **People** — add someone with a department, rename them, remove them (they become a *former* person: their attendance is kept, they leave the board, predictions and head-counts, and their login is unlinked but kept), and restore them later (admin)
 - **User management** — list, add, reset the password of, and remove accounts (admin)
-- **Activity log** — every admin change (and every admin command) is recorded: who, when (UTC+8), what, on whom, and the old and new value. Append-only and tamper-evident (a hash chain keyed with a secret). There is no page for it yet; see [Activity log](#activity-log)
+- **Activity log** — every admin change (and every admin command) is recorded: who, when (UTC+8), what, on whom, and the old and new value. Append-only and tamper-evident (a hash chain keyed with a secret). Admins read it in the **Activity log** section: plain-sentence entries, newest first, filters (admin, person, action, from, to), a banner that checks the hash chain, and a CSV download of whatever the filters match. See [Activity log](#activity-log)
+- **Last admin protected** — the server refuses to delete the only remaining admin account (`409`), even when two admins try to delete each other at the same moment
 - **SQLite storage** — the database is the source of truth; a CSV can optionally seed it on first run
-- **Automated checks** — 569 backend tests, and a GitHub Actions workflow that runs them and the frontend build on every push
+- **Automated checks** — 699 backend tests, and a GitHub Actions workflow that runs them and the frontend build on every push
 
 ## Stack
 
@@ -44,7 +45,7 @@ A small full-stack app that tracks weekday attendance and predicts it from histo
 attendance_tracker_app/
 ├── .github/workflows/ci.yml   # CI: pytest (backend) and npm run build (frontend) on every push
 ├── backend/
-│   ├── activity_log.py      # Activity log: table, HMAC hash chain, append_entry, verify_chain, anchor, append-only triggers
+│   ├── activity_log.py      # Activity log: table, HMAC hash chain, append_entry, verify_chain, anchor, append-only triggers, plain-sentence wording (describe), CSV export
 │   ├── app.py               # Flask app factory + API routes + CLI commands + UTC+8 clock and self-service cutoff
 │   ├── ml.py                # Training, prediction, evaluation, model cache (incl. invalidate_models)
 │   ├── backup.py            # Backup CSV: export every person and record, restore with validation
@@ -67,9 +68,13 @@ attendance_tracker_app/
 │   │   ├── test_summary.py          # the head-count
 │   │   ├── test_preds.py          # predictions and evaluation
 │   │   ├── test_schema.py           # database rules and startup migrations
-│   │   ├── test_lastadm.py
-│   │   ├── test_logs.py             # the log itself: hash, chain, append-only triggers, verify_chain, anchor
-│   │   ├── test_log_routes.py       # every admin route and command writes the right log rows (and none when it fails)
+│   │   ├── test_lastadm.py          # the last admin cannot be deleted, including two admins deleting each other at once
+│   │   ├── test_log_core.py         # the log itself: hash, chain, append-only triggers, anchor, count
+│   │   ├── test_log_wording.py      # the plain sentence for every action (describe), and unknown actions
+│   │   ├── test_log_writes.py       # every admin route and command writes the right log rows (and none when it fails)
+│   │   ├── test_log_page.py         # GET /api/activity-log: order, filters, paging, who may call it
+│   │   ├── test_log_verify.py       # GET /api/activity-log/verify: intact, edited, removed, inserted
+│   │   ├── test_log_csv.py          # the log CSV: filters, spreadsheet-formula protection, encoding, who may call it
 │   │   └── test_backup.py           # export / restore tests
 │   ├── attendance.db        # generated locally
 │   ├── models.joblib        # generated locally (model cache)
@@ -84,11 +89,13 @@ attendance_tracker_app/
 │       ├── DailyAttendance.jsx   # Today's Attendance: admin drag-and-drop board; hands everyone else to MyAttendance
 │       ├── MyAttendance.jsx      # Non-admin page: own status + head-count
 │       ├── AttendanceTally.jsx   # The bottom-right tally box
-│       ├── AttendanceUtils.js    # STATUSES list, date helpers, shared fetch/error helpers, CSV and backup download
+│       ├── AttendanceUtils.js    # STATUSES list, date helpers, shared fetch/error helpers, downloadFromServer (backup and log CSV)
 │       ├── AttendanceForm.jsx    # Admin section "Record attendance"
 │       ├── PeopleSection.jsx     # Admin section "People": add, rename, remove, restore, departments and logins
 │       ├── AccountsSection.jsx   # Admin section "Accounts": bulk logins, sign-up department requests
 │       ├── BackupSection.jsx     # Admin section "Backup"
+│       ├── ActivityLogSection.jsx  # Admin section "Activity log": chain banner, filters, paging, CSV download
+│       ├── ActivityLogUtils.js   # Log helpers: buildLogQuery, formatLogTime, groupEntries, ACTION_LABELS
 │       ├── UserManagement.jsx    # "Manage users": list / add / reset password / remove (admin)
 │       ├── ChangePassword.jsx    # Change your own password (also the forced screen for temporary passwords)
 │       └── *.css
@@ -185,6 +192,7 @@ These are plain constants, not environment variables (the environment variables 
 | Status codes and the words the activity log uses for them (the codes must match the database `CHECK` and the frontend `STATUSES`) | `STATUSES` in `backend/app.py` | `0` Out, `1` In, `2` Partial Day |
 | Where the browser may call the API from (CORS). Change it if the frontend runs on another port or host | `origins=[...]` in `create_app`, `backend/app.py` | `http://localhost:5173` |
 | Where the frontend finds the API | `SERVER_URL` in `frontend/src/App.jsx` | `http://localhost:5000` |
+| How many log rows one page of the Activity log shows (the server allows up to 500 per request) | `PAGE_SIZE` in `frontend/src/ActivityLogSection.jsx` | 50 |
 | Password length a user may choose | `PASSWORD_MIN`, `PASSWORD_MAX` in `backend/app.py` | 8 to 128 characters |
 | Length of generated temporary passwords, and how many logins one bulk request may create | `TEMPORARY_PASSWORD_LENGTH`, `BULK_LOGIN_LIMIT` in `backend/app.py` | 12 characters, 200 logins |
 | Minimum history before a person gets a model / before they are evaluated | `ml.py` | 5 records / 10 records |
@@ -235,7 +243,7 @@ The whole file is checked before anything is written, so a bad file changes noth
 
 Before a schema change or a `--replace`, `backend/attendance.db` can also be copied.
 
-**Backups contain real names, so keep them out of git.** The downloaded file goes wherever the browser saves it, but `export-backup backup.csv` run inside the repo does not. Add `attendance-backup-*.csv` and `backup*.csv` to `.gitignore`.
+**Backups contain real names, so keep them out of git.** The downloaded file goes wherever the browser saves it, but `export-backup backup.csv` run inside the repo does not. Add `attendance-backup-*.csv`, `backup*.csv` and `activity-log-*.csv` to `.gitignore`.
 
 ## First use
 
@@ -315,7 +323,14 @@ Names are copies, so a row still reads correctly after that admin's login or tha
 | `attendance_set` / `attendance_removed` | `2026-10-13 Out` → `2026-10-13 In` / `2026-10-13 In` → |
 | `backup_restored` (from `import-backup`) | `replaced existing data` → `N people, M attendance records` |
 
-Saving something that did not change writes nothing, and neither does a request that fails or is refused. **Not logged:** a user setting their own attendance or changing their own password, open sign-up, logging in and out, and anything that only reads (downloading a backup included). `tests/test_log_routes.py` lists every route and command that writes, and fails if a new one is neither logged nor given a reason.
+Saving something that did not change writes nothing, and neither does a request that fails or is refused. **Not logged:** a user setting their own attendance or changing their own password, open sign-up, logging in and out, and anything that only reads (downloading a backup or the log included). `tests/test_log_writes.py` lists every route and command that writes, and fails if a new one is neither logged nor given a reason. Each row records one fact; the screen groups neighbouring rows by the same admin, the same action and the same second (a bulk save of ten people shows as one entry) only when it displays them.
+
+**The Activity log section (admins only)** sits with the other admin sections. It shows:
+
+- **A chain banner** at the top: *Log intact: all N entries match their hashes*, or a red *The log has been altered* with the first entry that does not match. While no copy of the newest hash is kept off the server, the intact banner adds that entries removed from the very end cannot be detected yet.
+- **Entries, newest first**, as plain sentences, 50 at a time, with **Load older entries** for more.
+- **Filters:** admin (the name the admin had when the row was written), person (contains, case-insensitive), action, and *From* / *To* (inclusive days). **Search** applies them, **Clear** removes them.
+- **Refresh** and **Download CSV**. The CSV holds everything the filters match, not only the page on screen, oldest first, with the columns `seq, logged_at, admin, action, text, person, login, old, new, row_hash`. It opens correctly in Excel (UTF-8 with a byte-order mark), and a cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets a `'` in front so a spreadsheet cannot run it as a formula.
 
 **Tamper evidence:**
 - **The chain:** each row stores the previous row's hash and its own. Its own hash is an HMAC-SHA256 over every other column, keyed with `ACTIVITY_LOG_KEY`. Editing any column, or deleting or inserting a row, breaks the chain, and without the key nobody can rebuild it.
@@ -323,7 +338,7 @@ Saving something that did not change writes nothing, and neither does a request 
 - **What it doesn't stop:** someone with root on the server can read the key and rewrite everything.
 - **Cut-off rows at the end:** removing the newest rows leaves a valid, shorter chain. `activity_log.anchor()` returns the newest `(seq, hash)` for a copy kept off the server, and `verify_chain(anchor=...)` checks against it. Saving that copy with the scheduled backup is Roadmap item 6.
 
-**Reading and checking it** (until the log page exists), from `backend/`:
+**Reading and checking it from the server** (without the screen), from `backend/`:
 
 ```bash
 flask --app app shell
@@ -360,6 +375,9 @@ All endpoints except register, login and auth options need an authenticated sess
 | GET | `/api/me/attendance` | User | Own status for today, whether it can be edited, seconds left to the cutoff, link state |
 | PUT | `/api/me/attendance` | User | Set own status for today: `{status}` |
 | GET | `/api/export/attendance.csv` | Admin | The backup file (people, departments, all records); sent as a download, never cached |
+| GET | `/api/activity-log` | Admin | Log entries, newest first: `{entries: [{seq, logged_at, admin, action, text, person, login, old, new}], more}`. Optional `admin`, `person` (contains), `action`, `from`, `to` (`YYYY-MM-DD`, inclusive; a bad date answers `400`), `limit` (1 to 500, default 100) and `before=<seq>` for the next page |
+| GET | `/api/activity-log/verify` | Admin | Checks the whole hash chain: `{ok, first_bad_seq, rows, tail_checked}`. `tail_checked` stays `false` until a copy of the newest hash is kept off the server |
+| GET | `/api/activity-log.csv` | Admin | The log as a download (`activity-log-YYYY-MM-DD.csv`), with the same filters as the list, no paging, oldest first, never cached |
 | POST | `/api/table_persons` | Admin | Add a person: `{name, department?}`. A name held by a former person answers `409` (restore them instead) |
 | PATCH | `/api/people/<id>` | Admin | Change `{name?, department?, user_id?, former?}`. `user_id` links a login (or `null` unlinks); `former: true` removes the person (their login is unlinked and kept, `unlinked_username` says which), `former: false` restores them. A former person cannot be linked. All or nothing |
 | GET | `/api/users` | Admin | List accounts (`person_id`, `must_change_password`, `requested_department`) |
@@ -367,7 +385,7 @@ All endpoints except register, login and auth options need an authenticated sess
 | POST | `/api/users/bulk` | Admin | One linked login per person: `{person_ids}` (up to 200). Returns `{created: [{person_id, person, username, temporary_password}]}` once. All or nothing |
 | POST | `/api/users/<id>/password` | Admin | Temporary password: `{password?}` (blank generates one). Returns it once; the user must change it and is logged out everywhere. Not for your own account |
 | POST | `/api/users/<id>/department-request` | Admin | Answer a sign-up department request: `{action: "confirm" \| "dismiss"}` |
-| DELETE | `/api/users/<id>` | Admin | Remove an account (cannot remove ownself) |
+| DELETE | `/api/users/<id>` | Admin | Remove an account. Not your own (`400`), and not the last admin (`409`, "At least one admin is required for app operation.") |
 
 **Recording rules for `PUT /api/attendance`:** weekdays only, not in the future (judged in UTC+8), each `person_id` must exist, belong to a current (not former) person and appear once, and the request is all-or-nothing. Every record needs a `status` key: `0`, `1` or `2` (integers only), or `null` to **remove** that person's record for the day. The response is `{status, date, saved, removed}`. Removing anything clears the model cache (see below).
 
@@ -405,7 +423,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Each test gets its own empty SQLite file, its own model cache and a fixed clock, so it never touches `attendance.db`. 569 tests cover:
+Each test gets its own empty SQLite file, its own model cache and a fixed clock, so it never touches `attendance.db`. 699 tests cover:
 - the permission of every route (a new route that is not listed fails the suite)
 - logins and accounts: sign-up closed by default, change and reset password, the forced password change on every route, bulk logins, department requests
 - attendance entry and un-record, with model-cache clearing
@@ -414,13 +432,14 @@ Each test gets its own empty SQLite file, its own model cache and a fixed clock,
 - the tally, and predictions (admin only)
 - database constraints and startup migrations
 - backup and restore
-- the activity log: the exact bytes that are hashed, the chain, the append-only triggers and the anchor; and every admin route and command writing the right rows, or none when it fails, is refused or changes nothing
+- the last-admin rule, including two admins deleting each other at once
+- the activity log: the exact bytes that are hashed, the chain, the append-only triggers and the anchor; the plain sentence for every action; every admin route and command writing the right rows, or none when it fails, is refused or changes nothing; and the three log routes (list and filters, chain check, CSV)
 
-The tests were also checked by breaking the code on purpose: 21 deliberate bugs in the attendance code, 6 in the account code, 17 in the remove / rename code, 16 in the activity-log module and 34 in its wiring into the routes. Every one was caught.
+The tests were also checked by breaking the code on purpose: 21 deliberate bugs in the attendance code, 6 in the account code, 17 in the remove / rename code, 16 in the activity-log module and 34 in its wiring into the routes. Every one was caught. The last-admin rule and the three log routes were checked the same way; the few changes that cannot alter behaviour (for example a missing `rollback()`, which Flask does anyway) are not counted.
 
 **CI:** `.github/workflows/ci.yml` runs `pytest` (Python 3.13) and `npm ci` + `npm run build` (Node 22) on every push and pull request.
 
-The frontend has no tests yet; `npm run build` (from `frontend/`) is the check that it compiles. `npm run lint` still reports 4 older errors (the React rule against setting state inside an effect, in `App.jsx`, `AttendanceForm.jsx` and `UserManagement.jsx`), so CI does not run it yet.
+The frontend has no tests yet (the pure helpers in `ActivityLogUtils.js` are written so they are easy to test); `npm run build` (from `frontend/`) is the check that it compiles. `npm run lint` still reports 4 older errors (the React rule against setting state inside an effect, in `App.jsx`, `AttendanceForm.jsx` and `UserManagement.jsx`), so CI does not run it yet.
 
 ## Manual smoke test
 
@@ -430,7 +449,7 @@ After a change, this is the quick check for the parts that are not under test ye
 2. **Admin board:** drag names into each column and back to *Not Recorded*, Save, reload, and confirm the board matches. Un-recording must show the warning, and Cancel or Escape must leave the data untouched. Check the tally against the dropdown. On a phone-sized window (touch emulation), hold a chip briefly and drag; the tally must not overlap the toggle button.
 3. **Link and self-service:** link a login to a person (or create one with **Accounts → Create logins for people**, log in with its temporary password and choose your own), log in as that user, change status, and check the tally updates. To test the cutoff without waiting, temporarily set `SELF_SERVICE_CUTOFF` to `"23:59"` (open) and `"00:01"` (closed) and restart. **Set it back afterwards.**
 4. **Un-record and retrain:** open Predictions so `models.joblib` exists, un-record someone, confirm, and check the file is gone, then reappears after reopening Predictions.
-5. **Activity log:** make an admin change (rename someone, say), then open `flask --app app shell` in `backend/` and run the two lines under [Activity log](#activity-log). The newest row must show the change, and `print(verify_chain())` must print `None`.
+5. **Activity log:** make an admin change (rename someone, say), then open the **Activity log** section. The newest entry must describe the change and the banner must say *Log intact*. Filter by that person, press **Download CSV** and check the file holds only those rows. (The `flask --app app shell` lines under [Activity log](#activity-log) do the same from the server.)
 6. **Permissions, from PowerShell:**
 
 ```powershell
@@ -464,6 +483,9 @@ A `401` means the session is not logged in at all (for example a failed login), 
 - **`no such column: ...`** means the existing database predates a schema change. `db.create_all()` never alters existing tables — back up the file, then add the column manually or rebuild the table. (`person.department`, `person.former`, `user.person_id`, `user.must_change_password` and `user.requested_department` are added automatically at startup, and the `activity_log` table and its triggers are created, but only when you start with `python app.py`.)
 - **`no such table: activity_log`** means the backend was started some other way than `python app.py` on a database that predates the log. Start it with `python app.py` once.
 - **Every admin change answers `500` and the Flask terminal says `ACTIVITY_LOG_KEY must be set`:** `ENV=production` is set without the key. Set `ACTIVITY_LOG_KEY` to a long random string and restart (and keep it the same from then on).
+- **"At least one admin is required for app operation."** (`409`) means two admins deleted each other at the same moment and yours came second: nothing was removed. It cannot happen one request at a time, because you cannot delete your own account. The tests cover it, so the smoke test does not.
+- **The Activity log banner says "Could not check the log" or the list will not load.** Check the Flask terminal. A `403` means the login is not an admin; a `500` is usually `ACTIVITY_LOG_KEY` missing under `ENV=production`.
+- **The Activity log banner says "The log has been altered".** A row was edited, removed or inserted, or `ACTIVITY_LOG_KEY` is not the key the rows were written with. If you changed the key, put the old one back; do not rebuild the log.
 - **`ModuleNotFoundError: No module named 'activity_log'`:** `backend/activity_log.py` is missing.
 - **CI fails with "Some specified paths were not resolved, unable to cache dependencies".** `frontend/package-lock.json` is missing from the commit (it was deleted or never committed). Run `npm install` in `frontend/` and commit the new lockfile; `npm ci` in CI needs it.
 - **A blank page** in the browser is usually a JavaScript error. Check the DevTools console. Hooks (`useState` etc.) must be called inside a component.
@@ -475,13 +497,15 @@ A `401` means the session is not logged in at all (for example a failed login), 
 ## Known limitations
 
 - **Not production-ready:** no CSRF protection, no login rate limiting or lockout, no 2FA, and `python app.py` runs Flask's development server with `debug=True`. Open sign-up is off by default.
-- **The activity log has no page or download yet.** Read and check it with `flask --app app shell` (see [Activity log](#activity-log)). With several admins the last save of a day still silently wins, and the board does not refresh when another admin saves.
+- **The board is not kept fresh.** With several admins the last save of a day still silently wins, and the board does not refresh or warn when another admin saves (Roadmap item 4).
 - **The log's limits:**
   - The newest hash is not copied off the server yet, so rows cut off the end of the log go unnoticed.
   - The `import-backup` row is written just after the restore commits, so a crash between the two leaves the restore unlogged.
   - Root on the server can read `ACTIVITY_LOG_KEY` and rewrite the log.
   - Without the key in production the app still starts, but every admin change fails.
-- **Two admins deleting each other at the same moment can leave no admin.** Each delete only checks that it is not deleting its own account. (There is no way to demote an admin.) `flask --app app create-admin` and `set-password` are the way back in.
+  - The *From* / *To* filters compare the stored time as text, which is correct while every row carries the same `+08:00` offset. If `TIMEZONE_OFFSET_HOURS` ever becomes configurable and is changed on a database that already has rows, the filters will be off by the difference.
+  - The CSV of the **log** protects against spreadsheet formulas; the **backup** CSV cannot (it must restore exactly what it holds), so open a backup in a spreadsheet only if you trust every name in it.
+- **The last-admin rule only counts accounts.** There is no way to demote an admin, so deleting is the only way to lose one. `flask --app app create-admin` and `set-password` remain the way back in if everyone is locked out.
 - **Un-recording is a permanent delete.** The app warns first and can download a backup, but nothing is backed up automatically. Backups do not include logins or their person links.
 - **The stale-schema rebuild drops `person` and `attendance_record`** when the attendance table is missing expected columns. Back up before upgrading an old database.
 - **No Alembic migrations.** Startup adds the columns listed under *Setup* itself, but any other schema change needs manual SQL or a rebuild.
@@ -495,18 +519,18 @@ A `401` means the session is not logged in at all (for example a failed login), 
 
 ## Roadmap
 
-The plan is the TO DO list in `todo.txt`. When all eight items are done, the project is finished. Done so far: 1 (CI), 2 (admin-only Predictions, search and department filter), 3 (account management, remove / rename / restore people) and the recording half of 4 (the activity log). Left: the rest of 4, then 5 to 8.
+The plan is the TO DO list in `todo.txt`. When all eight items are done, the project is finished. Done so far: 1 (CI), 2 (admin-only Predictions, search and department filter), 3 (account management, remove / rename / restore people) and most of 4 (the activity log, its screen, and last-admin protection). Left: the stale-board warning in 4, then 5 to 8.
 
-- **4 — Multi-admin safety and the activity log.** *Done:* every admin change recorded and attributed (who, when in UTC+8, what, on whom, old and new value), append-only and tamper-evident. *Left:* read and download the log in the app, with the chain check; stop the last admin being deleted (two admins deleting each other at once); refresh or warn when the board is stale.
+- **4 — Multi-admin safety and the activity log.** *Done:* every admin change recorded and attributed (who, when in UTC+8, what, on whom, old and new value), append-only and tamper-evident; the log read, filtered, chain-checked and downloaded in the app; the last admin cannot be deleted (two admins deleting each other at once included). *Left:* refresh or warn when the board is stale.
 - **5 — Split Partial Day into AM and PM**, before real data exists (start at `STATUSES` in `AttendanceUtils.js` and `STATUSES` in `app.py`; then the `CHECK` constraint, the ML status mapping, the backup restore and the CSV import).
-- **6 — Deployment prep.** `.env` settings (CORS origin, timezone offset, cutoff, departments), gunicorn, a Dockerfile, HTTPS, SQLite WAL mode, a scheduled backup that includes the log and a copy of its newest hash (`anchor()`); refusing to start in production without `ACTIVITY_LOG_KEY`; CSRF protection and login rate limiting (droppable only on a private network or VPN); an atomic model-cache write; optionally 2FA for creating admin accounts.
+- **6 — Deployment prep.** `.env` settings (CORS origin, timezone offset, cutoff, departments), gunicorn, a Dockerfile, HTTPS, SQLite WAL mode, a scheduled backup that includes the log and an off-server copy of its newest hash (`anchor()`), which is what lets the chain check notice rows cut off the end; refusing to start in production without `ACTIVITY_LOG_KEY`; CSRF protection and login rate limiting (droppable only on a private network or VPN); an atomic model-cache write; optionally 2FA for creating admin accounts.
 - **7 — Frontend tests** (Vitest component tests, a few Playwright browser flows), added to CI.
 - **8 — Housekeeping.** The licence (the README currently says both "All rights reserved" and "GPL v3.0 when public"), a README screenshot, `.gitignore` additions, small naming tidy-ups.
 
 Later, if ever: Flask-Migrate for schema changes; a Vite proxy so API and UI share one origin in development; consistent response shapes and `create_app` split into blueprints; making `/api/predict` use the UTC+8 date.
 
 ## Version history
-- **v0.7** (next) — Last-admin protection, the activity-log page and download, the stale-board warning.
+- **v0.7** (in progress) — Done: last-admin protection (`409`, decided while holding SQLite's write lock so two admins cannot delete each other); the Activity log section (plain-sentence entries, filters, paging, chain check, CSV download); `GET /api/activity-log`, `/api/activity-log/verify` and `/api/activity-log.csv`; one log row per fact, grouped only on screen; backend tests grew from 569 to 699 and the log tests were split into six files. Left: the stale-board warning.
 - **v0.6** — CI (GitHub Actions: pytest and the frontend build) and `requirements.txt`. Predictions, accuracy and the people list are admin-only; department filter and name search beside the date picker (icon buttons on phones) and on the board. Account management: sign-up off by default (optional department request an admin confirms), bulk creation of linked logins with one-time temporary passwords and a CSV, forced password change for temporary passwords (enforced by the server), change password, admin reset password, `set-password` command, sessions ended by a password change. Remove, rename and restore people: a removed person becomes *former* (history kept, login unlinked but kept, left out of the board, predictions, head-counts and new logins) and can be restored from the Former people list; the head-count is for admins and linked logins only; the backup carries a `former` column. Activity log: every admin change and admin command is recorded (who, when in UTC+8, what, on whom, old and new value) in the same transaction as the change, with an HMAC hash chain, triggers that make the table append-only, `verify_chain` and `anchor`; status codes and their names now live in one `STATUSES` table in `app.py`. Backend tests grew from 31 to 569. New endpoints: `/api/auth/options`, `/api/me/password`, `/api/users/bulk`, `/api/users/<id>/password`, `/api/users/<id>/department-request`; `PATCH /api/people/<id>` now also takes `name` and `former`.
 - **v0.5** — Backup and restore: admin download of everyone and all attendance as one CSV, export-backup / import-backup commands with whole-file validation. A warning (with Download backup first) before Save deletes records. The admin screen split into separate Record attendance, People and Backup sections. The backend test suite (pytest).
 - **v0.4** — Un-record attendance (drag back to *Not Recorded*, plus forced model retrain). Self-service: users set their own status until 08:15 UTC+8, enforced by the server. Login ↔ person link, managed by admins. Tally with total at the bottom right (admin and user pages). Office clock fixed to UTC+8. `GET /api/attendance` and `PUT /api/attendance` are admin-only. New endpoints: `/api/today`, `/api/me/attendance`, `/api/attendance/summary`; `PATCH /api/people/<id>` now links logins.

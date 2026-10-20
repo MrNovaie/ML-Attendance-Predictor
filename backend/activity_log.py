@@ -24,6 +24,8 @@ import hmac
 import json
 import logging
 import os
+import csv
+import io
 
 from sqlalchemy import text
 
@@ -34,7 +36,7 @@ logger = logging.getLogger(__name__)
 GENESIS_HASH = "0" * 64
 FORMAT_VERSION = "v1"          # first thing inside every hash, so the hashed layout can change one day without confusion
 
-# Every column except row_hash goes into the hash, in this order. test_log.py checks this list against the table.
+# Every column except row_hash goes into the hash, in this order. test_log_core.py checks this list against the table.
 HASHED_FIELDS = (
     "seq", "admin_id", "admin_name", "logged_at", "action",
     "person_id", "person_name", "login_id", "login_name",
@@ -146,6 +148,9 @@ def anchor():
     last = _newest()
     return None if last is None else (last.seq, last.row_hash)
 
+def count() -> int:
+    """How many entries the log holds."""
+    return db.session.query(ActivityLog).count()
 
 def verify_chain(anchor=None):
     expected_seq, expected_prev_hash = 1, GENESIS_HASH  # the seq and the hash the next row should have
@@ -163,6 +168,35 @@ def verify_chain(anchor=None):
             return anchored_seq
     return None
 
+BOM = "\ufeff"           # makes Excel read the file as UTF-8, so names with accents survive (same as the backup CSV)
+CSV_COLUMNS = ("seq", "logged_at", "admin", "action", "text", "person", "login", "old", "new", "row_hash")
+_FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+ 
+ 
+def csv_safe(value):
+    """A cell value that a spreadsheet cannot mistake for a formula.
+ 
+    Excel and Sheets run a cell as a formula when its text starts with = + - @ (or a tab / carriage return), and
+    admins type the names that end up in the log. A leading quote makes the cell plain text. None becomes an empty cell.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str) and value.startswith(_FORMULA_STARTS):
+        return "'" + value
+    return value
+ 
+ 
+def export_csv_text(rows) -> str:
+    """The given log rows (oldest first reads best) as CSV text: one line per row, with the sentence and the hash."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\r\n")
+    writer.writerow(CSV_COLUMNS)
+    for r in rows:
+        writer.writerow([csv_safe(v) for v in (
+            r.seq, r.logged_at, r.admin_name, r.action, describe(r), r.person_name, r.login_name,
+            r.old_value, r.new_value, r.row_hash,
+        )])
+    return BOM + out.getvalue()
 
 def ensure_activity_log() -> None:
     """Create the table if it is missing and install the two triggers that refuse UPDATE and DELETE.

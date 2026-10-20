@@ -1,0 +1,156 @@
+/* Activity log section. Same width and left edge as the other admin sections. */
+.log-section {
+    margin-top: 2rem;
+    text-align: left;
+    width: 100%;
+    max-width: 36rem;
+    margin-left: auto;
+    margin-right: auto;
+    box-sizing: border-box;
+}
+
+.log-section summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.log-body {
+    display: flex;
+    flex-direction: column;
+    flex-basis: auto;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+    justify-items: center;
+}
+
+/* chain status banner */
+.log-chain {
+    margin: 0.75rem 0;
+    padding: 0.6rem 0.75rem;
+    border-left: 4px solid rgba(128, 128, 128, 0.6);
+    background: rgba(128, 128, 128, 0.1);
+    font-size: 0.9rem;
+}
+
+.log-chain--ok {
+    border-left-color: #4caf50;
+}
+
+.log-chain--bad {
+    border-left-color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.12);
+}
+
+.log-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.log-filters {
+    align-items:center;
+    width: 68%;
+}
+
+
+.log-filters label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.85rem;
+    min-width: 0;
+}
+
+.log-filters input,
+.log-filters select {
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0.4rem 0.5rem;
+    font: inherit;
+}
+
+.log-buttons {
+    margin-top: 1rem;
+    display: grid;
+    flex-wrap:wrap;
+    gap: 0.5rem;
+}
+
+.log-toolbar {
+    display: flex;
+    justify-self: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+/* the list */
+.log-list {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+}
+
+.log-item {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.75rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.log-item > details {
+    width: 100%;
+}
+
+.log-item summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.75rem;
+    font-weight: normal;
+}
+
+.log-item time {
+    flex: 0 0 8.5rem;
+    font-size: 0.85rem;
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+}
+
+.log-text {
+    flex: 1 1 14rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.log-seq {
+    font-size: 0.75rem;
+    opacity: 0.5;
+}
+
+.log-sublist {
+    list-style: none;
+    margin: 0.4rem 0 0.2rem;
+    padding-left: 1rem;
+    font-size: 0.9rem;
+}
+
+.log-sublist li {
+    padding: 0.15rem 0;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 30rem) {
+
+    .log-toolbar {
+        width:68%
+    }
+
+    .log-item time {
+        flex-basis: 100%;
+    }
+}

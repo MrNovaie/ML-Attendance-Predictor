@@ -4,7 +4,7 @@ import re
 import pytest
 
 from conftest import PASSWORD, login, make_people
-from test_perms import ADMIN_ONLY, ANY_LOGIN, OWN_ATTENDANCE, call
+from test_perms import ADMIN_ONLY, ANY_LOGIN, LINKED_OR_ADMIN, OWN_ATTENDANCE, call
 
 NEW_PASSWORD = "a-brand-new-pass"
 
@@ -92,7 +92,7 @@ def test_a_flagged_login_can_log_in_see_who_it_is_and_log_out(world):
     assert client.post("/api/logout").status_code == 200
 
 
-ROUTES = [row for row in ADMIN_ONLY + ANY_LOGIN + [OWN_ATTENDANCE]
+ROUTES = [row for row in ADMIN_ONLY + ANY_LOGIN + LINKED_OR_ADMIN + [OWN_ATTENDANCE]
           if row[1] not in ("/api/me", "/api/logout", "/api/me/password")]
 
 

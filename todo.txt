@@ -15,7 +15,7 @@ v0.4
 - "Today" is now judged in UTC+8, not the server's timezone. GET and PUT /api/attendance are admin-only.
 - README updated to v0.4.
 
-v0.5 (in progress)
+v0.5
 - Backup: admins download everyone's attendance as one CSV (person, department, date, status) from the Backup section.
   Same file from the command line: flask --app app export-backup backup.csv
 - Restore: flask --app app import-backup backup.csv [--replace] [--yes]. The whole file is checked first and written in one
@@ -31,50 +31,69 @@ v0.5 (in progress)
   "Add a person". Adding a person or moving a login link refreshes the Record attendance list without a page reload.
 - README brought up to date (title, configuration table, CORS, backups-in-git warning, tests, new section names).
 
+v0.6
+- CI: GitHub Actions runs pytest and the frontend build on every push; requirements.txt / requirements-dev.txt.
+- Predictions, accuracy and the people list are admin-only. Department filter and name search beside the date picker (icon
+  buttons on phones) and on the board.
+- Account management: sign-up off by default (optional department request an admin confirms), bulk creation of linked logins
+  with one-time temporary passwords and a CSV, forced password change (enforced by the server), change password, admin reset
+  password, set-password command, sessions ended by a password change.
+- Remove, rename and restore people (a removed person becomes "former": history kept, login unlinked but kept).
+- Activity log (recording): every admin change and admin command, in the same transaction as the change. HMAC hash chain,
+  append-only triggers, verify_chain, anchor.
+- Backend tests: 569.
 
-TO DO  (planned use: about 10 admins and 50 accounts. When all seven are done, the project is FINISHED.)
+v0.7 (in progress)
+- Last-admin protection: DELETE /api/users/<id> deletes first, counts the admins while holding SQLite's write lock, and rolls
+  back with 409 if none is left, so two admins cannot delete each other.
+- Activity log, reading: GET /api/activity-log (filters admin, person, action, from, to; paging with before and limit),
+  GET /api/activity-log/verify (chain check) and GET /api/activity-log.csv (same filters, formula-safe, UTF-8 with BOM).
+  One row per fact; neighbouring rows are grouped only on screen. Plain-sentence wording for every action (describe).
+- Activity log screen in the app (admins): chain banner, filters, Load older entries, Refresh, Download CSV.
+- Backend tests: 699, log tests split into test_log_core / wording / writes / page / verify / csv.
+- NOT DONE yet: the stale-board warning (item 4).
 
-1. Admin-only Predictions, plus the name search and department filter
-   Everyone's names and predicted status are visible to every login, so with 50 real accounts this is the privacy fix. The search
-   also stops being a nicety once the Not Recorded tray holds 50 names.
-   - @admin_required on /api/predict, /api/evaluate and /api/people (check what MyAttendance needs first), and hide the toggle and
-     page for non-admins. test_permissions.py will tell you which table rows to move.
-   - Name search bar and department filter beside the calendar. PC: department on the left of the calendar, search on the right.
-     Phone: calendar and filter as squarish icon buttons next to / under the search bar (icons to be supplied).
+TO DO  (planned use: about 10 admins and 50 accounts. When all eight are done, the project is FINISHED.)
 
-2. Account management for 50 people
-   - Close open registration. (Ideally make admin account creation a 2FA process.)
-   - If registration stays open for a while: an optional department request (default Holding) that an admin confirms.
-     Do not create a person at sign-up.
-   - Add a way to reset or change a password. Today an admin can only delete and re-create an account, which unlinks it.
-   - Bulk account creation with automatic linking to the person. Linking 50 logins one dropdown at a time is tedious.
-   - Remove and rename people. Deleting needs a decision about their attendance rows and about the login linked to them.
-     (Backup restore with --replace is the current workaround.)
+1. CI - DONE (v0.6)
+2. Admin-only Predictions, name search and department filter - DONE (v0.6)
+3. Account management for 50 people - DONE (v0.6)
 
-3. Multi-admin safety
-   With 10 admins, two will eventually edit the same day, and the last save silently wins.
-   - Record who changed or removed each record, and when. Admins will ask "who un-recorded Ben?".
-   - Stop the last admin from being deleted or demoted.
-   - Let the board refresh, or warn when it is stale.
+4. Multi-admin safety and the activity log - MOSTLY DONE
+   Done: every admin change recorded and attributed; the log read, filtered, chain-checked and downloaded in the app; the last
+   admin cannot be deleted.
+   LEFT: let the board refresh, or warn when it is stale. With 10 admins, two will eventually edit the same day and the last
+   save silently wins. Needs a small backend change (a way to tell that a day changed since the board loaded, for example the
+   newest updated_at for that date, sent back with the save and compared; answer 409 with the names of whoever changed it)
+   and a frontend message on the board. Decide the design first.
 
-4. The AM/PM split, before you go live
+5. The AM/PM split, before you go live
    It rebuilds a table, and that is much safer before real data exists than after.
-   Start at STATUSES (attendanceUtils.js) and ALLOWED_STATUSES (app.py). The status CHECK constraint in users.py (0, 1, 2) means
-   a table rebuild (test_schema.py has the constraint tests to update), and the ML status mapping, backup.py (allowed statuses)
-   and the CSV import need updating too.
+   Start at STATUSES in AttendanceUtils.js and STATUSES in app.py (the codes and the words the activity log uses for them).
+   The status CHECK constraint in users.py (0, 1, 2) means a table rebuild (test_schema.py has the constraint tests to update),
+   and the ML status mapping, backup.py (allowed statuses), the CSV import and the log wording (describe) need updating too.
 
-5. Deployment prep
+6. Deployment prep
    The .env settings, gunicorn, a Dockerfile, HTTPS, SQLite WAL mode and a scheduled backup.
    - Before running several gunicorn workers, make the model-cache write atomic. Two workers retraining at once can leave a
      half-written models.joblib.
+   - Production must set ENV=production, SECRET_KEY and ACTIVITY_LOG_KEY. Without the key every admin change answers 500, by
+     design. Never change the key for an existing database.
+   - Scheduled backup that includes the activity log, plus an off-server copy of the newest hash (activity_log.anchor()).
+     Until that exists the chain check cannot notice rows cut off the end (tail_checked stays false); then pass the copy to
+     verify_chain(anchor=...) and report tail_checked true.
+   - CSRF protection and login rate limiting. Droppable only if the app stays on a private network or VPN, and the README says so.
+   - Optionally 2FA for creating admin accounts.
    - .env, backend (backend/.env):  CORS_ORIGIN (now hard-coded http://localhost:5173), TIMEZONE_OFFSET_HOURS (8),
-     SELF_SERVICE_CUTOFF ("08:15"), DEPARTMENTS (comma-separated) and DEFAULT_DEPARTMENT (Holding). SECRET_KEY, DATABASE_URL and
-     ENV are already environment variables, they just have no .env file to live in yet.
+     SELF_SERVICE_CUTOFF ("08:15"), DEPARTMENTS (comma-separated) and DEFAULT_DEPARTMENT (Holding). SECRET_KEY, DATABASE_URL,
+     ENV and ACTIVITY_LOG_KEY are already environment variables, they just have no .env file to live in yet.
+     If TIMEZONE_OFFSET_HOURS becomes changeable, remember the log's From/To filters compare the stored time as text and
+     assume one offset for every row.
    - .env, frontend (frontend/.env):  VITE_API_URL (now SERVER_URL in App.jsx, http://localhost:5000). Vite only exposes names that
      start with VITE_, reads the file when the dev server starts (restart it after editing) and bakes the value in at build time.
-   - What does NOT move: STATUSES, ALLOWED_STATUSES and the status CHECK constraint. They have to change together, so a .env entry
-     would let them drift apart. The seed CSV's expected column names (GOOD_HEADERS, in your import_csv.py) describe a file
-     format, not a setting; leave them in code unless you have a reason.
+   - What does NOT move: STATUSES and the status CHECK constraint. They have to change together, so a .env entry would let them
+     drift apart. The seed CSV's expected column names (GOOD_HEADERS, in your import_csv.py) describe a file format, not a
+     setting; leave them in code unless you have a reason.
    - How, so that it works:
        a. pip install python-dotenv (not installed yet; .env is already in .gitignore but nothing reads it). Add it to
           requirements.txt.
@@ -91,31 +110,35 @@ TO DO  (planned use: about 10 admins and 50 accounts. When all seven are done, t
    - Check that it works: delete .env and confirm the app behaves as before; set a different cutoff, restart, and confirm the
      seconds left to the cutoff in GET /api/me/attendance change accordingly; set a bad value and confirm the server refuses to
      start; run pytest with a .env present and with none.
-   - Not on the internet until items 1 and 2 are done: the CORS origin and SERVER_URL are hard-coded to localhost, and there is no
-     CSRF protection or rate limiting.
+   - Not on the internet until the CORS origin and SERVER_URL are configurable and CSRF protection and rate limiting exist
+     (or the app is only reachable on a private network).
 
-6. Frontend tests and CI
+7. Frontend tests and CI
    These come last because the backend tests already protect the rules that matter most.
-   - Component tests with Vitest + jsdom: the un-record warning, the tally, the cutoff lock on the user page, the People section.
-   - A few browser flows with Playwright: drag and drop (mouse and touch), un-record with the warning, the three admin sections,
-     the phone layout.
-   - A GitHub Actions workflow that runs pytest and the frontend build on every push.
+   - Component tests with Vitest + jsdom: the un-record warning, the tally, the cutoff lock on the user page, the People section,
+     and the Activity log helpers (buildLogQuery, groupEntries, formatLogTime are pure functions).
+   - A few browser flows with Playwright: drag and drop (mouse and touch), un-record with the warning, the admin sections
+     (including the Activity log), the phone layout.
+   - Add these to the GitHub Actions workflow (it already runs pytest and the frontend build). Fix the 4 older lint errors
+     (React rule against setting state inside an effect, in App.jsx, AttendanceForm.jsx and UserManagement.jsx), then add
+     npm run lint to CI.
 
-7. Housekeeping and naming tidy-ups (small; do these before the repo is made public)
-   - Keep the file name AttendanceUtils.js, and make every import agree with it. Today the imports say './attendanceUtils' (in
-     AttendanceTally.jsx, BackupSection.jsx, MyAttendance.jsx, PeopleSection.jsx, DailyAttendance.jsx), which only works because
-     Windows ignores case. On Linux, macOS, Docker and CI it fails with "module not found". Change them to './AttendanceUtils',
-     and update the README (layout, troubleshooting) and this file to the same spelling.
+8. Housekeeping and naming tidy-ups (small; do these before the repo is made public)
    - Change every "Not recorded" to "Not Recorded": the tray title in DailyAttendance.jsx, the tally label in AttendanceTally.jsx,
      "Not recorded yet" in MyAttendance.jsx, the comments in DailyAttendance.jsx, DailyAttendance.css and app.py, and the README and
      this file. Anything that checks the old text (the tally string "Not recorded 1", browser checks) changes with it.
    - Delete the untracked package.json and package-lock.json at the repo root if they only contain @dnd-kit/core. The real ones
      are in frontend/.
-   - Add to .gitignore: attendance-backup-*.csv, backup*.csv (backups contain real names), .pytest_cache/, frontend/dist/. The
-     backend/instance/ line is listed twice.
+   - Add to .gitignore: attendance-backup-*.csv, backup*.csv, new-logins-*.csv, activity-log-*.csv (all contain real names),
+     .pytest_cache/, frontend/dist/. The backend/instance/ line is listed twice.
    - App.jsx lines 3-4 are import './AttendanceForm' and import './UserManagement' with no file extension and nothing imported.
      They look like they were meant to be the .css files; the components already import their own CSS, so delete both lines or
      fix them.
    - Decide the license. The README says "All rights reserved" and also "When public, GPL v3.0", which contradict each other.
-   - Add a screenshot to the README (e.g. docs/screenshot.png), taken after the search and filter step changes the layout.
+   - Add a screenshot to the README (e.g. docs/screenshot.png), taken after the layout is final.
    - Create backend/admin.py only if admin routes are split out of app.py; otherwise drop it from the README layout.
+   - Login timing leak: /api/login answers faster for an unknown username. Fix it (compare against a dummy hash) or keep it
+     in the README's known limitations.
+   - Optional: the import-backup log row is written just after the restore commits; a crash between the two leaves the
+     restore unlogged.
+   - Done already: every import spells AttendanceUtils with a capital A (Linux and CI need that).

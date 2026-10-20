@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import './App.css'
+import ActivityLogSection from './ActivityLogSection'
 import AttendanceForm from './AttendanceForm'
 import PeopleSection from './PeopleSection'
 import BackupSection from './BackupSection'
@@ -351,6 +352,7 @@ function App() {
                         />
                     )}
                     {isAdmin && <BackupSection serverUrl={SERVER_URL} />}
+                    {isAdmin && <ActivityLogSection serverUrl={SERVER_URL} />}
                     {isAdmin && <UserManagement serverUrl={SERVER_URL} currentUsername={user} />}
                 </>
             )}

@@ -38,10 +38,8 @@ export function describeError(err) {
     return err instanceof TypeError ? 'Could not reach the server.' : err.message
 }
 
-// Downloads the whole-database backup (people, departments, attendance) as a CSV file.
-// fetch + blob rather than a plain link, so the login cookie is sent and an error can be shown.
-export async function downloadBackup(serverUrl) {
-    const response = await fetch(`${serverUrl}/api/export/attendance.csv`, { credentials: 'include' })
+export async function downloadFromServer(url, fallbackName) {
+    const response = await fetch(url, { credentials: 'include' })
     if (!response.ok) {
         let message = `HTTP ${response.status}`
         try {
@@ -53,17 +51,23 @@ export async function downloadBackup(serverUrl) {
     }
     const blob = await response.blob()
     const named = /filename="?([^";]+)"?/.exec(response.headers.get('Content-Disposition') || '')
-    const fileName = named ? named[1] : 'attendance-backup.csv'
-    const url = URL.createObjectURL(blob)
+    const fileName = named ? named[1] : fallbackName
+    const objectUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = url
+    link.href = objectUrl
     link.download = fileName
     document.body.appendChild(link)
     link.click()
     link.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
     return fileName
 }
+
+// Downloads the whole-database backup (people, departments, attendance) as a CSV file.
+export function downloadBackup(serverUrl) {
+    return downloadFromServer(`${serverUrl}/api/export/attendance.csv`, 'attendance-backup.csv')
+}
+
 // The 2 functions below help download a CSV of the new usernames and temporary passwords.
 // Saves text as a file in the browser (UTF-8 with a byte-order mark, so Excel reads accents correctly).
 export function downloadTextFile(fileName, text, type = 'text/csv') {

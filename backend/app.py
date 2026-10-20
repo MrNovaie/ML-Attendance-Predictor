@@ -1084,9 +1084,92 @@ def create_app() -> Flask:
             department=department or None,
             by_status={str(status): count for status, count in by_status.items()},
             not_recorded=total - sum(by_status.values()),
-            total=total,
+            total=total
         )
+    
+    def _filtered_log_query():
+        """The log rows matching ?admin= ?person= ?action= ?from= ?to=, as a query (unordered). Raises ValueError for a
+        bad date. One place for the filters, so the page and the CSV can never disagree about what a filter means."""
+        Log = activity_log.ActivityLog
+        query = Log.query
 
+        admin = (request.args.get("admin") or "").strip()
+        if admin:
+            query = query.filter(Log.admin_name == admin)       # the stored copy, so it works after the login is gone
+
+        person = (request.args.get("person") or "").strip()
+        if person:
+            escaped = person.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")   # typed % and _ mean themselves
+            query = query.filter(Log.person_name.ilike(f"%{escaped}%", escape="\\"))
+
+        action = (request.args.get("action") or "").strip()
+        if action:
+            query = query.filter(Log.action == action)
+
+        day_from = _log_day_argument("from")
+        day_to = _log_day_argument("to")
+        # logged_at is text like "2026-10-14T11:00:00+08:00": same offset on every row, date first, so text order is time order
+        if day_from:
+            query = query.filter(Log.logged_at >= day_from.isoformat())
+        if day_to:
+            query = query.filter(Log.logged_at < (day_to + timedelta(days=1)).isoformat())   # all of that day
+        return query
+
+    @app.get("/api/activity-log")
+    @login_required
+    @admin_required
+    def activity_log_list():
+        """Newest first. Filters (all optional): admin, person (contains), action, from, to (inclusive days).
+        Paging: ?before=<seq> returns rows older than that seq; `more` says whether another page exists."""
+        Log = activity_log.ActivityLog
+        try:
+            query = _filtered_log_query()
+        except ValueError:
+            return jsonify(code=400, error="Dates must look like 2026-10-14"), 400
+
+        before = request.args.get("before", type=int)
+        if before:
+            query = query.filter(Log.seq < before)
+        limit = max(1, min(request.args.get("limit", 100, type=int), 500))
+
+        rows = query.order_by(Log.seq.desc()).limit(limit + 1).all()       # one extra row tells us there is a next page
+        more = len(rows) > limit
+        rows = rows[:limit]
+        return jsonify(entries=[{
+            "seq": r.seq, "logged_at": r.logged_at, "admin": r.admin_name, "action": r.action,
+            "text": activity_log.describe(r),
+            "person": r.person_name, "login": r.login_name, "old": r.old_value, "new": r.new_value,
+        } for r in rows], more=more)
+
+    @app.get("/api/activity-log/verify")
+    @login_required
+    @admin_required
+    def activity_log_verify():
+        """Check the whole chain. ok is false when any row was edited, removed or inserted. tail_checked says whether
+        rows cut off the END would have been noticed: that needs a copy of the newest hash kept off this server
+        (the scheduled backup, roadmap item 6), so for now it is always false."""
+        bad = activity_log.verify_chain()          # None, or the seq of the first bad row
+        return jsonify(ok=bad is None, first_bad_seq=bad, rows=activity_log.count(), tail_checked=False)
+
+    @app.get("/api/activity-log.csv")
+    @login_required
+    @admin_required
+    def activity_log_csv():
+        """The rows matching the same filters as the list, all of them (no paging), oldest first."""
+        try:
+            query = _filtered_log_query()
+        except ValueError:
+            return jsonify(code=400, error="Dates must look like 2026-10-14"), 400
+        rows = query.order_by(activity_log.ActivityLog.seq.asc()).all()
+        filename = f"activity-log-{local_today().isoformat()}.csv"
+        return Response(
+            activity_log.export_csv_text(rows),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",  # it holds real names: do not let anything cache it
+            },
+        )
     '''Backup'''
     @app.get("/api/export/attendance.csv")
     @login_required
@@ -1136,57 +1219,7 @@ def create_app() -> Flask:
         """The ?from= / ?to= argument as a date, or None when it is absent. Raises ValueError for anything else."""
         raw = (request.args.get(name) or "").strip()
         return date.fromisoformat(raw) if raw else None
- 
-    @app.get("/api/activity-log")
-    @login_required
-    @admin_required
-    def activity_log_list():
-        """Newest first. Filters (all optional): admin, person (contains), action, from, to (inclusive days).
-        Paging: ?before=<seq> returns rows older than that seq; `more` says whether another page exists."""
-        Log = activity_log.ActivityLog
-        query = Log.query
- 
-        admin = (request.args.get("admin") or "").strip()
-        if admin:
-            query = query.filter(Log.admin_name == admin)       # the stored copy, so it works after the login is gone
- 
-        person = (request.args.get("person") or "").strip()
-        if person:
-            escaped = person.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")   # typed % and _ mean themselves
-            query = query.filter(Log.person_name.ilike(f"%{escaped}%", escape="\\"))
- 
-        action = (request.args.get("action") or "").strip()
-        if action:
-            query = query.filter(Log.action == action)
- 
-        try:
-            day_from = _log_day_argument("from")
-            day_to = _log_day_argument("to")
-        except ValueError:
-            return jsonify(code=400, error="Dates must look like 2026-10-14"), 400
-        # logged_at is text like "2026-10-14T11:00:00+08:00": same offset on every row, date first, so text order is time order
-        if day_from:
-            query = query.filter(Log.logged_at >= day_from.isoformat())
-        if day_to:
-            query = query.filter(Log.logged_at < (day_to + timedelta(days=1)).isoformat())   # all of that day
- 
-        before = request.args.get("before", type=int)
-        if before:
-            query = query.filter(Log.seq < before)
-        limit = max(1, min(request.args.get("limit", 100, type=int), 500))
- 
-        rows = query.order_by(Log.seq.desc()).limit(limit + 1).all()       # one extra row tells us there is a next page
-        more = len(rows) > limit
-        rows = rows[:limit]
-        return jsonify(entries=[{
-            "seq": r.seq, "logged_at": r.logged_at, "admin": r.admin_name, "action": r.action,
-            "text": activity_log.describe(r),
-            "person": r.person_name, "login": r.login_name, "old": r.old_value, "new": r.new_value
-        } for r in rows], more=more)
     return app
-
-    
-
 
 
 if __name__ == "__main__":
