@@ -11,7 +11,7 @@ import DailyAttendance from './DailyAttendance'
 import FilterBar from './FilterBar'
 import { matchesSearch } from './AttendanceUtils'
 
-const SERVER_URL = 'http://localhost:5000'
+const SERVER_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '')
 
 function App() {
     const targetDate = new Date()

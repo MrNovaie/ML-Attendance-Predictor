@@ -7,4 +7,10 @@ backend/instance/
 backend/attendance.db
 backend/models.joblib
 backend/instance/
+attendance-backup-*.csv
+backup*.csv
+new-logins-*.csv
+activity-log-*.csv
+.pytest_cache/
+frontend/dist/
 frontend/node_modules/

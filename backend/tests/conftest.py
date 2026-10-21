@@ -2,9 +2,13 @@
 
 Run from the backend folder:  pip install pytest   then   pytest
 """
+import os
 from datetime import datetime, timezone
 
 import pytest
+
+# backend/.env is for the real app and is switched off here before app.py is imported.
+os.environ.setdefault("ATTENDANCE_NO_DOTENV", "1")
 from werkzeug.security import generate_password_hash
 
 PASSWORD = "password123"

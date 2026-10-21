@@ -30,8 +30,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 
-# The office runs on UTC+8. "Today" and the self-service cutoff are judged in this timezone and not
-# in the server's, so they stay right when the server clock is UTC.
+# The office runs on UTC+8. "Today" and the self-service cutoff are judged in this timezone, not the server's.
 TIMEZONE_OFFSET_HOURS = 8
 TIMEZONE_LABEL = f"UTC{TIMEZONE_OFFSET_HOURS:+d}"
 LOCAL_TZ = timezone(timedelta(hours=TIMEZONE_OFFSET_HOURS))
@@ -39,6 +38,13 @@ LOCAL_TZ = timezone(timedelta(hours=TIMEZONE_OFFSET_HOURS))
 SELF_SERVICE_CUTOFF = "08:15"
 _CUTOFF_HOUR, _CUTOFF_MINUTE = (int(part) for part in SELF_SERVICE_CUTOFF.split(":"))
 
+def load_env_file(path=None) -> bool:
+    if os.environ.get("ATTENDANCE_NO_DOTENV"):
+        return False
+    from dotenv import load_dotenv
+    return load_dotenv(path or BASE_DIR / ".env", override=False)
+
+load_env_file()
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -311,14 +317,65 @@ def clean_department(value):
         return None, f"Department must be one of: {', '.join(allowed)}."
     return value, None
 
+def _database_url() -> str:
+    return os.environ.get("DATABASE_URL", "").strip() or f"sqlite:///{(BASE_DIR / 'attendance.db').as_posix()}"
+
+def _cors_origins() -> list:
+    raw = os.environ.get("CORS_ORIGIN", "").strip()
+    if not raw:
+        if os.environ.get("ENV") == "production":
+            raise RuntimeError(
+                "CORS_ORIGIN must be set to the address people open the app at, "
+                "for example https://attendance.example.com",
+                "when ENV=production."
+            )
+        return ["http://localhost:5173"]
+    origins = [part.strip() for part in raw.split(",") if part.strip()]
+    for origin in origins:
+        if not re.fullmatch(r"https?://[^/\s*,]+", origin):
+            raise RuntimeError(
+                f"CORS_ORIGIN contains {origin!r}. Each origin must look like http://host:port or https://host, "
+                "with no path and no trailing slash. '*' is not allowed."
+            )
+    return origins
+
+def _is_cookie_secure() -> bool:
+    """Whether the session cookie is marked Secure, so the browser only sends it over HTTPS.
+    On by default in production."""
+    production = os.environ.get("ENV") == "production"
+    setting = os.environ.get("COOKIE_SECURE", "").strip().lower()
+    if setting in ("1", "true", "yes"):
+        return True
+    if setting in ("0", "false", "no"):
+        if production:
+            logging.getLogger(__name__).warning(
+            "COOKIE_SECURE is off in production: logins are not protected by HTTPS. "
+            "Only do this on a trusted private network."
+        )
+        return False
+    if setting:
+        raise RuntimeError("COOKIE_SECURE must be 1 or 0 (or true/false, yes/no).")
+    return production
+
+def run_settings() -> dict:
+    """
+    How `python app.py` starts the built-in server. HOST defaults to this computer only (set HOST=0.0.0.0 to let
+    other computers on the network reach it). Debug mode (the browser debugger and auto-reload) is only on outside
+    production.
+    """
+    return {
+        "host": os.environ.get("HOST", "").strip() or "127.0.0.1",
+        "port": int(os.environ.get("PORT", "").strip() or 5000),
+        "debug": os.environ.get("ENV") != "production",
+    }
+
 def create_app() -> Flask:
     app = Flask(__name__)
     # SQLAlchemy reads SQLALCHEMY_DATABASE_URI at init_app() time, so config
     # MUST be set before db.init_app(app) below.
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-    "DATABASE_URL", f"sqlite:///{(BASE_DIR / 'attendance.db').as_posix()}"
-    )
+    app.config["SQLALCHEMY_DATABASE_URI"] = _database_url()
     app.config["SECRET_KEY"] = _resolve_secret_key()
+    activity_log.require_key()
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     # Open sign-up is OFF unless ALLOW_REGISTRATION is set to 1/true/yes. With it off, only admins create logins.
     app.config["ALLOW_REGISTRATION"] = os.environ.get("ALLOW_REGISTRATION", "").strip().lower() in ("1", "true", "yes")
@@ -327,14 +384,13 @@ def create_app() -> Flask:
     # frontend lives on a separate site and is served over HTTPS.
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("ENV") == "production"
-
+    app.config["SESSION_COOKIE_SECURE"] = _is_cookie_secure()
     # supports_credentials=True is required for the browser to send the
     # Flask-Login session cookie on cross-origin fetches; the frontend must
     # also set fetch(..., { credentials: "include" }). Origin must be exact
     # (no "*") when credentials are enabled.
-    CORS(app, supports_credentials=True, origins=["http://localhost:5173"],
-         expose_headers=["Content-Disposition"])  # lets the frontend read the download's file name
+    CORS(app, supports_credentials=True, origins=_cors_origins(),
+           expose_headers=["Content-Disposition"])  # lets the frontend read the download's file name
     db.init_app(app)
     login_manager.init_app(app)
     @login_manager.unauthorized_handler
@@ -1274,4 +1330,4 @@ if __name__ == "__main__":
         ensure_user_account_columns()
         activity_log.ensure_activity_log()
         import_csv()
-    app.run(debug=True, port=5000)
+    app.run(**run_settings())

@@ -43,102 +43,75 @@ v0.6
   append-only triggers, verify_chain, anchor.
 - Backend tests: 569.
 
-v0.7 (in progress)
-- Last-admin protection: DELETE /api/users/<id> deletes first, counts the admins while holding SQLite's write lock, and rolls
-  back with 409 if none is left, so two admins cannot delete each other.
+v1.0  (the finished version for its planned use: a small team on a private network)
+- AM/PM split: "Partial Day" (2) became "AM (In)" (2) and "PM (In)" (3). The status table lives in one place
+  (STATUSES in users.py); the CHECK constraint, API checks, model labels, backup restore and log wording read it. Startup
+  rebuilds attendance_record by itself (one transaction, every row kept). Old Partial Day rows become AM only.
+- Last-admin protection: DELETE /api/users/<id> deletes first, counts the admins while holding SQLite's write lock, and
+  rolls back with 409 if none is left, so two admins cannot delete each other.
 - Activity log, reading: GET /api/activity-log (filters admin, person, action, from, to; paging with before and limit),
   GET /api/activity-log/verify (chain check) and GET /api/activity-log.csv (same filters, formula-safe, UTF-8 with BOM).
   One row per fact; neighbouring rows are grouped only on screen. Plain-sentence wording for every action (describe).
-- Activity log screen in the app (admins): chain banner, filters, Load older entries, Refresh, Download CSV.
-- Backend tests: 699, log tests split into test_log_core / wording / writes / page / verify / csv.
-- NOT DONE yet: the stale-board warning (item 4).
+  Activity log screen in the app (admins): chain banner, filters, Load older entries, Refresh, Download CSV.
+- Deployment settings: CORS_ORIGIN, VITE_API_URL, COOKIE_SECURE, HOST and PORT; backend/.env and frontend/.env with
+  .env.example templates; the server refuses to start in production without SECRET_KEY, ACTIVITY_LOG_KEY or CORS_ORIGIN;
+  debug mode off in production. README: "Deploying on a private network" (no CSRF protection or rate limiting: keep it
+  off the open internet).
+- Housekeeping: Not Recorded wording, AttendanceUtils import casing, .gitignore additions, GPL v3.0 licence decided,
+  README screenshots, admin.py dropped from the README layout.
+- Backend tests: 753.
 
-TO DO  (planned use: about 10 admins and 50 accounts. When all eight are done, the project is FINISHED.)
 
-1. CI - DONE (v0.6)
-2. Admin-only Predictions, name search and department filter - DONE (v0.6)
-3. Account management for 50 people - DONE (v0.6)
+TO DO  (planned use: about 10 admins and 50 accounts.)
 
-4. Multi-admin safety and the activity log - MOSTLY DONE
-   Done: every admin change recorded and attributed; the log read, filtered, chain-checked and downloaded in the app; the last
-   admin cannot be deleted.
-   LEFT: let the board refresh, or warn when it is stale. With 10 admins, two will eventually edit the same day and the last
-   save silently wins. Needs a small backend change (a way to tell that a day changed since the board loaded, for example the
-   newest updated_at for that date, sent back with the save and compared; answer 409 with the names of whoever changed it)
-   and a frontend message on the board. Decide the design first.
+Items 1-8 of the original list: 1, 2, 3, 4 (except the stale-board warning), 5, 6 (the minimal pass) and 8 are DONE.
+v1.0 was declared finished with the items below deliberately left for v1.x, roughly in this order.
 
-5. The AM/PM split, before you go live
-   It rebuilds a table, and that is much safer before real data exists than after.
-   Start at STATUSES in AttendanceUtils.js and STATUSES in app.py (the codes and the words the activity log uses for them).
-   The status CHECK constraint in users.py (0, 1, 2) means a table rebuild (test_schema.py has the constraint tests to update),
-   and the ML status mapping, backup.py (allowed statuses), the CSV import and the log wording (describe) need updating too.
+v1.x
 
-6. Deployment prep
-   The .env settings, gunicorn, a Dockerfile, HTTPS, SQLite WAL mode and a scheduled backup.
-   - Before running several gunicorn workers, make the model-cache write atomic. Two workers retraining at once can leave a
+1. Stale-board warning
+   With 10 admins, two will eventually edit the same day and the last save silently wins. Needs a small backend change (a
+   way to tell that a day changed since the board loaded, for example the newest updated_at for that date, sent back with
+   the save and compared; answer 409 with the names of whoever changed it) and a frontend message on the board. Decide the
+   design first.
+
+2. A production server and HTTPS
+   gunicorn (Linux) or waitress (Windows) behind a reverse proxy, a Dockerfile, SQLite WAL mode.
+   - Move the startup steps (the ensure_* calls in the __main__ block of app.py) into one function that both
+     `python app.py` and a wsgi.py call, so a production server runs them too. test_schema.py already checks that every
+     ensure_* function is called from __main__; point it at the new function.
+   - Make the model-cache write atomic (write to a temporary file, then rename). Two workers retraining at once can leave a
      half-written models.joblib.
-   - Production must set ENV=production, SECRET_KEY and ACTIVITY_LOG_KEY. Without the key every admin change answers 500, by
-     design. Never change the key for an existing database.
-   - Scheduled backup that includes the activity log, plus an off-server copy of the newest hash (activity_log.anchor()).
-     Until that exists the chain check cannot notice rows cut off the end (tail_checked stays false); then pass the copy to
-     verify_chain(anchor=...) and report tail_checked true.
-   - CSRF protection and login rate limiting. Droppable only if the app stays on a private network or VPN, and the README says so.
-   - Optionally 2FA for creating admin accounts.
-   - .env, backend (backend/.env):  CORS_ORIGIN (now hard-coded http://localhost:5173), TIMEZONE_OFFSET_HOURS (8),
-     SELF_SERVICE_CUTOFF ("08:15"), DEPARTMENTS (comma-separated) and DEFAULT_DEPARTMENT (Holding). SECRET_KEY, DATABASE_URL,
-     ENV and ACTIVITY_LOG_KEY are already environment variables, they just have no .env file to live in yet.
-     If TIMEZONE_OFFSET_HOURS becomes changeable, remember the log's From/To filters compare the stored time as text and
-     assume one offset for every row.
-   - .env, frontend (frontend/.env):  VITE_API_URL (now SERVER_URL in App.jsx, http://localhost:5000). Vite only exposes names that
-     start with VITE_, reads the file when the dev server starts (restart it after editing) and bakes the value in at build time.
-   - What does NOT move: STATUSES and the status CHECK constraint. They have to change together, so a .env entry would let them
-     drift apart. The seed CSV's expected column names (GOOD_HEADERS, in your import_csv.py) describe a file format, not a
-     setting; leave them in code unless you have a reason.
-   - How, so that it works:
-       a. pip install python-dotenv (not installed yet; .env is already in .gitignore but nothing reads it). Add it to
-          requirements.txt.
-       b. Load it from backend/.env by path (Path(__file__).parent / ".env"), not the current directory, the same way the database
-          path is resolved. Use load_dotenv(override=False) so a real environment variable still wins.
-       c. Read the values inside create_app, not at import time, and give each a default equal to today's constant, so the app
-          behaves the same with no .env at all.
-       d. Validate at startup and fail with a clear message: offset is an integer from -12 to 14, cutoff matches HH:MM, the
-          department list is not empty, the default department is in the list. A typo should stop the server, not shift the cutoff.
-       e. Tests must not read your own .env: have conftest.py set the values explicitly (or pass a config dict to create_app),
-          otherwise a local TIMEZONE_OFFSET_HOURS would break the fixed-clock tests.
-       f. Commit backend/.env.example and frontend/.env.example with the default values and a comment on each; the real .env files
-          stay ignored. Add the variables to the README's Configuration and Environment variables tables.
-   - Check that it works: delete .env and confirm the app behaves as before; set a different cutoff, restart, and confirm the
-     seconds left to the cutoff in GET /api/me/attendance change accordingly; set a bad value and confirm the server refuses to
-     start; run pytest with a .env present and with none.
-   - Not on the internet until the CORS origin and SERVER_URL are configurable and CSRF protection and rate limiting exist
-     (or the app is only reachable on a private network).
 
-7. Frontend tests and CI
-   These come last because the backend tests already protect the rules that matter most.
-   - Component tests with Vitest + jsdom: the un-record warning, the tally, the cutoff lock on the user page, the People section,
-     and the Activity log helpers (buildLogQuery, groupEntries, formatLogTime are pure functions).
+3. CSRF protection and login rate limiting
+   What stands between this app and the open internet. Also the login timing leak: /api/login answers faster for an
+   unknown username (compare against a dummy hash).
+
+4. Scheduled backup, and the log's off-server anchor
+   A scheduled job that copies attendance.db and the CSV backup, and saves activity_log.anchor() (the newest seq and hash)
+   somewhere off the server. Then pass that copy to verify_chain(anchor=...) and report tail_checked true, so rows cut off
+   the end of the log are noticed.
+
+5. Frontend tests and CI
+   - Component tests with Vitest + jsdom: the un-record warning, the tally, the cutoff lock on the user page, the People
+     section, and the Activity log helpers (buildLogQuery, groupEntries, formatLogTime are pure functions).
    - A few browser flows with Playwright: drag and drop (mouse and touch), un-record with the warning, the admin sections
      (including the Activity log), the phone layout.
    - Add these to the GitHub Actions workflow (it already runs pytest and the frontend build). Fix the 4 older lint errors
      (React rule against setting state inside an effect, in App.jsx, AttendanceForm.jsx and UserManagement.jsx), then add
      npm run lint to CI.
 
-8. Housekeeping and naming tidy-ups (small; do these before the repo is made public)
-   - Change every "Not recorded" to "Not Recorded": the tray title in DailyAttendance.jsx, the tally label in AttendanceTally.jsx,
-     "Not recorded yet" in MyAttendance.jsx, the comments in DailyAttendance.jsx, DailyAttendance.css and app.py, and the README and
-     this file. Anything that checks the old text (the tally string "Not recorded 1", browser checks) changes with it.
-   - Delete the untracked package.json and package-lock.json at the repo root if they only contain @dnd-kit/core. The real ones
-     are in frontend/.
-   - Add to .gitignore: attendance-backup-*.csv, backup*.csv, new-logins-*.csv, activity-log-*.csv (all contain real names),
-     .pytest_cache/, frontend/dist/. The backend/instance/ line is listed twice.
-   - App.jsx lines 3-4 are import './AttendanceForm' and import './UserManagement' with no file extension and nothing imported.
-     They look like they were meant to be the .css files; the components already import their own CSS, so delete both lines or
-     fix them.
-   - Decide the license. The README says "All rights reserved" and also "When public, GPL v3.0", which contradict each other.
-   - Add a screenshot to the README (e.g. docs/screenshot.png), taken after the layout is final.
-   - Create backend/admin.py only if admin routes are split out of app.py; otherwise drop it from the README layout.
-   - Login timing leak: /api/login answers faster for an unknown username. Fix it (compare against a dummy hash) or keep it
-     in the README's known limitations.
-   - Optional: the import-backup log row is written just after the restore commits; a crash between the two leaves the
-     restore unlogged.
-   - Done already: every import spells AttendanceUtils with a capital A (Linux and CI need that).
+6. More settings in .env
+   TIMEZONE_OFFSET_HOURS (8), SELF_SERVICE_CUTOFF ("08:15"), DEPARTMENTS (comma-separated) and DEFAULT_DEPARTMENT (Holding),
+   read inside create_app with today's values as defaults, and validated at startup (offset an integer from -12 to 14,
+   cutoff matches HH:MM, department list not empty, default in the list). Tests must set them explicitly. If the offset
+   becomes changeable, the log's From/To filters (which compare the stored time as text) assume one offset for every row.
+   STATUSES and the CHECK constraint do NOT move into .env: they have to change together.
+
+7. Smaller things
+   - Optional 2FA for creating admin accounts.
+   - The import-backup log row is written just after the restore commits; a crash between the two leaves the restore unlogged.
+   - Delete the untracked package.json and package-lock.json at the repo root if they only contain @dnd-kit/core.
+   - Check App.jsx for the two imports with no file extension and nothing imported ('./AttendanceForm' and
+     './UserManagement'); delete them if they are still there.
+   - Create backend/admin.py only if admin routes are split out of app.py.

@@ -8,7 +8,7 @@ File format (one header row, then one row per record):
     Cai,Holding,,,1
 
 * date is ISO (YYYY-MM-DD), so history can span any number of years.
-* status is the numeric code stored in the database (0 = Out, 1 = In, 2 = Partial Day).
+* status is the numeric code stored in the database (0 = Out, 1 = In, 2 = AM (In), 3 = PM (In)).
 * A person with no records at all gets a single row with an empty date and status, so the roster
   survives a round trip too.
 * former is 1 for a person an admin has removed (they keep their history but are inactive), otherwise 0.

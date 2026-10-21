@@ -86,6 +86,10 @@ def _key() -> bytes:
         _warned_dev_key = True
     return b"dev-only-activity-log-key"
 
+def require_key() -> None:
+    """Called when the app is created. In production a missing ACTIVITY_LOG_KEY stops the server from starting, instead
+    of letting it run and then fail every admin change. (In development it only logs the dev-key warning.)"""
+    _key()
 
 def canonical_bytes(row) -> bytes:
     """Exactly the bytes that get hashed for `row` (anything with the HASHED_FIELDS as attributes).
