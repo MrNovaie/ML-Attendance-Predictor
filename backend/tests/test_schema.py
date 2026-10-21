@@ -42,6 +42,7 @@ def startup(flask_app, appmod):
     with flask_app.app_context():
         db.create_all()
         appmod.ensure_attendance_schema()
+        appmod.ensure_attendance_status_check()
         appmod.ensure_person_department()
         appmod.ensure_person_former()
         appmod.ensure_user_person_link()
@@ -67,13 +68,15 @@ def add_row(flask_app, person_id, day, status, dow=None):
         db.session.commit()
 
 
-@pytest.mark.parametrize("status", [3, -1, 9])
-def test_database_refuses_a_status_outside_0_1_2(world, status):
-    from extensions import db
-
+@pytest.mark.parametrize("status", [4, -1, 9])
+def test_database_refuses_a_status_outside_the_status_table(world, status):
     with pytest.raises(IntegrityError):
         add_row(world.app, world.people["Ana"], date(2026, 10, 13), status)
 
+@pytest.mark.parametrize("status", [0, 1, 2, 3])
+def test_database_accepts_every_status_in_the_table(world, status):
+    add_row(world.app, world.people["Ana"], date(2026, 10, 13), status)
+    assert query(world.app, "SELECT status FROM attendance_record") == [(status,)]
 
 @pytest.mark.parametrize("dow", [0, 6, 7])
 def test_database_refuses_a_weekday_number_outside_1_to_5(world, dow):
@@ -201,6 +204,7 @@ def test_a_current_database_is_left_alone(world, appmod, caplog):
     with caplog.at_level(logging.WARNING):
         startup(world.app, appmod)
     assert "stale schema" not in caplog.text and "Adding the column" not in caplog.text
+    assert "Rebuilding the table" not in caplog.text
     assert query(world.app, "SELECT COUNT(*) FROM attendance_record") == [(1,)]
     assert query(world.app, "SELECT COUNT(*) FROM person") == [(3,)]
 
@@ -212,3 +216,100 @@ def test_running_startup_twice_changes_nothing(old_db, appmod):
     before = query(old_db, "SELECT * FROM person")
     startup(old_db, appmod)
     assert query(old_db, "SELECT * FROM person") == before
+
+
+
+# ---- attendance_record: the status CHECK before AM only / PM only existed ------------------------------
+
+OLD_ATTENDANCE_TABLE = (
+    "CREATE TABLE attendance_record (id INTEGER NOT NULL, person_id INTEGER NOT NULL, date DATE NOT NULL, "
+    "day_of_week SMALLINT NOT NULL, status SMALLINT NOT NULL, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), "
+    "updated_at DATETIME NOT NULL, PRIMARY KEY (id), CONSTRAINT uq_person_date UNIQUE (person_id, date), "
+    "CHECK (day_of_week IN (1, 2, 3, 4, 5)), CHECK (status IN (0, 1, 2)), FOREIGN KEY(person_id) REFERENCES person (id))"
+)
+
+
+@pytest.fixture
+def old_status_db(old_db, appmod):
+    """A database made before status 3 existed: current tables, but an attendance_record that only allows 0, 1, 2,
+    holding one record of each status."""
+    startup(old_db, appmod)
+    run_sql(old_db,
+            "DROP TABLE attendance_record",
+            OLD_ATTENDANCE_TABLE,
+            "INSERT INTO person (name, department) VALUES ('Ana', 'Finance')",
+            "INSERT INTO attendance_record (id, person_id, date, day_of_week, status, updated_at) "
+            "VALUES (10, 1, '2026-10-12', 1, 0, '2026-10-12 08:00:00'), (11, 1, '2026-10-13', 2, 1, '2026-10-13 08:00:00'), "
+            "(12, 1, '2026-10-14', 3, 2, '2026-10-14 08:00:00')")
+    return old_db
+
+
+def test_an_old_status_check_is_rebuilt_and_every_row_is_kept(old_status_db, appmod, caplog):
+    before = query(old_status_db, "SELECT * FROM attendance_record ORDER BY id")
+    with caplog.at_level(logging.WARNING):
+        startup(old_status_db, appmod)
+    assert "Rebuilding the table" in caplog.text
+    assert query(old_status_db, "SELECT * FROM attendance_record ORDER BY id") == before     # ids, dates, times, statuses
+    assert query(old_status_db, "SELECT name FROM sqlite_master WHERE name LIKE 'attendance_record%'") == [("attendance_record",)]
+
+
+def test_after_the_rebuild_status_3_is_allowed_and_the_other_rules_still_hold(old_status_db, appmod):
+    startup(old_status_db, appmod)
+    run_sql(old_status_db, "INSERT INTO attendance_record (person_id, date, day_of_week, status, updated_at) "
+                           "VALUES (1, '2026-10-15', 4, 3, CURRENT_TIMESTAMP)")
+    with pytest.raises(IntegrityError):         # still only the statuses in the table
+        run_sql(old_status_db, "INSERT INTO attendance_record (person_id, date, day_of_week, status, updated_at) "
+                               "VALUES (1, '2026-10-16', 5, 4, CURRENT_TIMESTAMP)")
+    with pytest.raises(IntegrityError):         # still one record per person per day
+        run_sql(old_status_db, "INSERT INTO attendance_record (person_id, date, day_of_week, status, updated_at) "
+                               "VALUES (1, '2026-10-15', 4, 1, CURRENT_TIMESTAMP)")
+    with pytest.raises(IntegrityError):         # still weekdays only
+        run_sql(old_status_db, "INSERT INTO attendance_record (person_id, date, day_of_week, status, updated_at) "
+                               "VALUES (1, '2026-10-17', 6, 1, CURRENT_TIMESTAMP)")
+
+
+def test_a_rebuilt_table_still_fills_in_created_at_and_works_with_the_models(old_status_db, appmod):
+    startup(old_status_db, appmod)
+    run_sql(old_status_db, "INSERT INTO attendance_record (person_id, date, day_of_week, status, updated_at) "
+                           "VALUES (1, '2026-10-15', 4, 3, CURRENT_TIMESTAMP)")
+    assert query(old_status_db, "SELECT created_at IS NOT NULL FROM attendance_record WHERE date = '2026-10-15'") == [(1,)]
+    from extensions import db
+    from users import AttendanceRecord
+
+    with old_status_db.app_context():
+        assert sorted(r.status for r in AttendanceRecord.query.all()) == [0, 1, 2, 3]
+
+
+def test_running_the_rebuild_twice_changes_nothing_the_second_time(old_status_db, appmod, caplog):
+    startup(old_status_db, appmod)
+    after_first = query(old_status_db, "SELECT * FROM attendance_record ORDER BY id")
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        startup(old_status_db, appmod)
+    assert "Rebuilding the table" not in caplog.text
+    assert query(old_status_db, "SELECT * FROM attendance_record ORDER BY id") == after_first
+
+
+def test_a_rebuild_that_fails_leaves_the_old_table_and_its_rows_untouched(old_status_db, appmod, monkeypatch):
+    before = query(old_status_db, "SELECT * FROM attendance_record ORDER BY id")
+    monkeypatch.setattr(appmod, "attendance_table_sql", lambda: "THIS IS NOT SQL")
+    with pytest.raises(Exception):
+        startup(old_status_db, appmod)
+    assert query(old_status_db, "SELECT * FROM attendance_record ORDER BY id") == before
+    assert query(old_status_db, "SELECT name FROM sqlite_master WHERE name LIKE 'attendance_record%'") == [("attendance_record",)]
+    with pytest.raises(IntegrityError):          # and it still has its old rules
+        run_sql(old_status_db, "INSERT INTO attendance_record (person_id, date, day_of_week, status, updated_at) "
+                               "VALUES (1, '2026-10-15', 4, 3, CURRENT_TIMESTAMP)")
+
+
+def test_python_app_py_runs_every_ensure_step(appmod):
+    """`python app.py` is the only place the startup steps run, so a step that is written but not called there
+    never happens. Every ensure_* function in app.py must appear in the __main__ block (and in startup() above)."""
+    import inspect as pyinspect
+    import re
+
+    source = pyinspect.getsource(appmod)
+    main_block = source.split('if __name__ == "__main__":')[1]
+    written = set(re.findall(r"^def (ensure_\w+)\(", source, flags=re.MULTILINE))
+    called = set(re.findall(r"\b(ensure_\w+)\(", main_block))
+    assert written and written <= called, f"never called at startup: {sorted(written - called)}"

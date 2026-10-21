@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy.exc import IntegrityError
 # Importing users registers User on db's metadata so db.create_all() picks
 # it up. Don't drop this import even though `User` is the only name we use.
-from users import User, Person, AttendanceRecord, DEFAULT_DEPARTMENT, DEPARTMENTS
+from users import User, Person, AttendanceRecord, DEFAULT_DEPARTMENT, DEPARTMENTS, STATUSES
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
@@ -146,6 +146,48 @@ def ensure_attendance_schema() -> None:
     Person.__table__.drop(db.engine, checkfirst=True)
     db.create_all()
 
+def attendance_table_sql() -> str:
+    """The CREATE TABLE statement for attendance_record."""
+    from sqlalchemy.schema import CreateTable
+
+    return str(CreateTable(AttendanceRecord.__table__).compile(dialect=db.engine.dialect))
+
+def ensure_attendance_status_check() -> None:
+    """Ensure the database status CHECK matches users.STATUS"""
+    import sqlite3
+    from sqlalchemy import inspect, text
+    inspector = inspect(db.engine)
+    if not inspector.has_table("attendance_record"):
+        return
+    wanted = "status IN (%s)" % ", ".join(str(code) for code in sorted(STATUSES))
+    with db.engine.connect() as conn:
+        ddl = conn.execute(text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attendance_record'")).scalar()
+        if ddl is None or wanted in ddl: 
+            return
+        cols = [c["name"] for c in inspector.get_columns("attendance_record")]
+        if not {"person_id", "date", "day_of_week", "status", "updated_at"} <= set(cols):
+            return # stale schema, handled by ensure_attendance_schema()
+        path = db.engine.url.database
+        if not path or path == ":memory:":
+            return
+        logger.warning("attendance_record allows older status codes. Rebuilding the table to allow %s.", sorted(STATUSES))
+        create_sql = attendance_table_sql()
+        column_list = ", ".join(f'"{c}"' for c in cols)
+        raw = sqlite3.connect(path, isolation_level=None)
+        try:
+            raw.execute("PRAGMA foreign_keys = OFF")
+            raw.execute("BEGIN IMMEDIATE")
+            try:
+                raw.execute("ALTER TABLE attendance_record RENAME TO attendance_record_old")
+                raw.execute(create_sql)
+                raw.execute(f"INSERT INTO attendance_record ({column_list}) SELECT {column_list} FROM attendance_record_old")
+                raw.execute("DROP TABLE attendance_record_old")
+                raw.execute("COMMIT")
+            except Exception:
+                raw.execute("ROLLBACK")
+                raise
+        finally:
+            raw.close()
 
 def ensure_person_department() -> None:
     """Make sure person.department exists and nobody is left without one.
@@ -874,9 +916,6 @@ def create_app() -> Flask:
                        user_id=linked.id if linked else None, former=bool(person.former),
                        unlinked_username=unlinked_username)
 
-    '''Updating or changing attendance'''
-    STATUSES = {0: "Out", 1: "In", 2: "Partial Day"}
-
     def valid_status(value) -> bool:
         # type() rather than isinstance(): True/False are ints in Python and must not count as 1/0.
         return type(value) is int and value in STATUSES
@@ -909,7 +948,7 @@ def create_app() -> Flask:
         # "status": null removes the person's record for that day (back to "Not Recorded").
         # The key must be present, so a record with no status can never delete by accident.
         if any("status" not in e for e in entries):
-            return jsonify(error="Each record needs a status (0, 1, 2, or null to remove)."), 400
+            return jsonify(error=f"Each record needs a status ({', '.join(str(code) for code in sorted(STATUSES))}, or null to remove)."), 400
         if any(e["status"] is not None and not valid_status(e["status"]) for e in entries):
             return jsonify(error=f"status must be one of {sorted(STATUSES)}, or null to remove."), 400
 
@@ -1228,6 +1267,7 @@ if __name__ == "__main__":
     with app.app_context():
         db.create_all()
         ensure_attendance_schema()
+        ensure_attendance_status_check()
         ensure_person_department()
         ensure_person_former()
         ensure_user_person_link()

@@ -6,8 +6,9 @@ import pytest
 from werkzeug.security import generate_password_hash
 
 from conftest import login
+from users import STATUSES
 
-ALLOWED = {0, 1, 2}
+ALLOWED = set(STATUSES)
 
 
 # ---- helpers -------------------------------------------------------------------------------------
@@ -138,6 +139,15 @@ def test_round_trip_is_lossless(make_app):
     assert counts(fresh) == counts(original) == (4, 5)
     assert export_text(fresh) == exported    # identical file out of the restored database
 
+def test_every_status_survives_a_backup_and_restore(make_app):
+    fresh = make_app("fresh")
+    days = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15"]
+    text = GOOD_HEADER + "".join(f"Ana,Finance,{day},{status}\r\n" for status, day in enumerate(days))
+    assert restore(fresh, text) == {"people": 1, "records": 4}
+    assert export_text(fresh).count("\r\n") == 5 # the header and one row for each status
+    for status, day in enumerate(days):
+        assert f"Ana,Finance,{day},{status},0" in export_text(fresh)
+    
 
 def test_restore_sets_day_of_week_from_the_date(make_app):
     from users import AttendanceRecord
@@ -206,7 +216,7 @@ BAD_FILES = {
     "empty person": (GOOD_HEADER + ",Finance,2026-10-12,1\r\n", "person is empty"),
     "bad date": (GOOD_HEADER + "Ana,Finance,12/10/2026,1\r\n", "not a date in YYYY-MM-DD"),
     "weekend": (GOOD_HEADER + "Ana,Finance,2026-10-17,1\r\n", "is a weekend"),
-    "status out of range": (GOOD_HEADER + "Ana,Finance,2026-10-12,3\r\n", "must be one of 0, 1, 2"),
+    "status out of range": (GOOD_HEADER + "Ana,Finance,2026-10-12,4\r\n", "must be one of 0, 1, 2, 3"),
     "status 1.0": (GOOD_HEADER + "Ana,Finance,2026-10-12,1.0\r\n", "must be one of"),
     "status word": (GOOD_HEADER + "Ana,Finance,2026-10-12,In\r\n", "must be one of"),
     "date without status": (GOOD_HEADER + "Ana,Finance,2026-10-12,\r\n", "both be filled in"),

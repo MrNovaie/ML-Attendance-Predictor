@@ -9,6 +9,8 @@ from extensions import db
 DEFAULT_DEPARTMENT = "Holding"
 DEPARTMENTS = ["Intelligence", "Finance", "Human Resources", "Manpower", "Headquarters"]
 
+# Every attendance status is stored here (one source of truth)
+STATUSES = {0: "Out", 1: "In", 2: "AM (In)", 3: "PM (In)"}
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -59,13 +61,13 @@ class AttendanceRecord(db.Model):
     date = db.Column(db.Date, nullable=False)
     # day_of_week mirrors ml.DOW_NAMES (Mon=1..Fri=5); keep both in sync.
     day_of_week = db.Column(db.SmallInteger, nullable=False)
-    # status mirrors ml.predict_attendance VERDICT (0=Out, 1=In, 2=Partial Day).
+    # The codes and their names are STATUSES, above (ml.VERDICT is the same table).
     status = db.Column(db.SmallInteger, nullable=False)
     created_at = db.Column(db.DateTime, server_default=db.func.now())
     updated_at = db.Column(db.DateTime, nullable=False, default=db.func.now(), onupdate=db.func.now())
-
+    
     __table_args__ = (
         db.UniqueConstraint('person_id', 'date', name='uq_person_date'),
         db.CheckConstraint('day_of_week IN (1, 2, 3, 4, 5)'),
-        db.CheckConstraint('status IN (0, 1, 2)'),
+        db.CheckConstraint('status IN (%s)' % ', '.join(str(code) for code in sorted(STATUSES))),
     )

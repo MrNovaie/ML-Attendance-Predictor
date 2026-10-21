@@ -24,11 +24,10 @@
     opacity: 0.7;
 }
 
-/* Three columns separated by lines, like the sketch's table */
+/* One column per status (the number is set in DailyAttendance.jsx), separated by lines, like the sketch's table */
 .daily-board {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
     border: 2px solid currentColor;
     box-sizing: border-box;
 }
@@ -115,9 +114,14 @@
     background: rgba(0, 200, 80, 0.15);
 }
 
-.daily-chip--partial-day {
+.daily-chip--am-only {
     border-color: rgba(248, 219, 33, 0.8);
     background: rgba(255, 242, 0, 0.15);
+}
+
+.daily-chip--pm-only {
+    border-color: rgba(0, 157, 255, 0.85);
+    background: rgba(0, 132, 255, 0.18);
 }
 
 .daily-chip--out {
@@ -165,7 +169,7 @@
     padding: 0.55rem 1.6rem;
     border: none;
     border-radius: 10px;
-    background: #1a73e8;
+    background: #991ae8;
     color: #fff;
     font-size: 1rem;
     font-weight: 700;
@@ -173,7 +177,7 @@
 }
 
 .daily-save-btn:hover:not(:disabled) {
-    background: #1562c6;
+    background: #6a15c6;
 }
 
 .daily-save-btn:disabled {
@@ -340,13 +344,22 @@
 .my-option--in.is-selected:hover {
     background: rgba(0, 200, 80, 0.3);
 }
-.my-option--partial-day.is-selected {
+.my-option--am-only.is-selected {
     border-color: rgba(248, 219, 33, 0.8);
     background: rgba(255, 242, 0, 0.2);
 }
-.my-option--partial-day.is-selected:hover {
+.my-option--am-only.is-selected:hover {
     background: rgba(255, 242, 0, 0.3);
 }
+.my-option--pm-only.is-selected {
+    border-color: rgba(0, 109, 177, 0.85);
+    background: rgba(0, 140, 255, 0.22)
+}
+
+.my-option--pm-only.is-selected:hover {
+     background: rgba(0, 51, 255, 0.32)
+}
+
 .my-option--out.is-selected {
     border-color: rgb(220, 53, 69);
     background: rgba(220, 53, 69, 0.2);
@@ -420,6 +433,11 @@
     .daily-chips {
         padding: 0.4rem;
         gap: 0.3rem;
+    }
+
+    .daily-column-title {
+        padding: 0.4rem 0.15rem;
+        font-size: 0.8rem;
     }
 
     .daily-chip {

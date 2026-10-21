@@ -116,7 +116,7 @@ def test_a_weekend_in_the_office_that_is_still_friday_in_utc(world, set_clock):
     assert login(world.app, "alice").get("/api/today").get_json()["weekend"] is True
 
 
-@pytest.mark.parametrize("status", [3, -1, "1", None, 1.0, True, False, [1]], ids=repr)
+@pytest.mark.parametrize("status", [4, -1, "1", None, 1.0, True, False, [1]], ids=repr)
 def test_invalid_status_is_refused_even_when_everything_else_is_fine(world, set_clock, status):
     set_clock(WED_0800)
     assert set_mine(login(world.app, "alice"), status).status_code == 400

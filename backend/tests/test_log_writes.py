@@ -297,7 +297,7 @@ def test_several_changes_in_one_request_each_get_their_own_row_in_a_fixed_order(
 
 def test_attendance_set_changed_unchanged_and_removed(w):
     make_record(w.app, w.people["Ben"], DAY, 0)                         # Ben was Out
-    make_record(w.app, w.people["Cai"], DAY, 2)                         # Cai was Partial Day
+    make_record(w.app, w.people["Cai"], DAY, 2)                         # Cai was AM (In)
     ana, ben, cai = w.people["Ana"], w.people["Ben"], w.people["Cai"]
     response, new = logged(w, lambda c: c.put("/api/attendance", json={"date": DAY, "records": [
         {"person_id": ana, "status": 1},       # a new record
@@ -309,11 +309,11 @@ def test_attendance_set_changed_unchanged_and_removed(w):
                           ("attendance_set", "Ben", None, f"{DAY} Out", f"{DAY} In")]
     _, new = logged(w, lambda c: c.put("/api/attendance", json={"date": DAY, "records": [
         {"person_id": ana, "status": None},    # removes Ana's record
-        {"person_id": cai, "status": 0},       # Partial Day -> Out
+        {"person_id": cai, "status": 0},       # AM (In) -> Out
         {"person_id": ben, "status": None},    # removes Ben's record (he was In after the first request)
     ]}))
     assert brief(new) == [("attendance_removed", "Ana", None, f"{DAY} In", None),
-                          ("attendance_set", "Cai", None, f"{DAY} Partial Day", f"{DAY} Out"),
+                          ("attendance_set", "Cai", None, f"{DAY} AM (In)", f"{DAY} Out"),
                           ("attendance_removed", "Ben", None, f"{DAY} In", None)]
 
 

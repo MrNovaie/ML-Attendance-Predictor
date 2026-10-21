@@ -48,6 +48,11 @@ def test_predicts_each_weekdays_usual_status(world, user):
     assert friday["verdict"] == "Out"
     assert 0 < monday["p_winner"] <= 100
 
+def test_predicts_am_only_and_pm_only_by_name(world, user):
+    history(world, "Ana", [2, 2, 2, 2, 3], weeks=3)               # AM (In) Monday to Thursday, PM (In) on Fridays
+    monday = predict(user, MONDAY).get_json()["predictions"][0]
+    friday = predict(user, FRIDAY).get_json()["predictions"][0]
+    assert (monday["verdict"], friday["verdict"]) == ("AM (In)", "PM (In)")
 
 def test_reports_the_requested_date_and_a_message(world, user):
     history(world, "Ana", [1, 1, 1, 1, 0], weeks=3)

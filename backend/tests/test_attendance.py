@@ -97,13 +97,17 @@ def test_a_record_without_a_status_key_never_deletes(world, admin):
     assert recorded(world.app, TUESDAY) == {"Ana": 1}
 
 
-@pytest.mark.parametrize("status", [3, -1, 99, "1", "In", 1.0, 1.5, True, False, [1], {}],
+@pytest.mark.parametrize("status", [4, -1, 99, "1", "In", 1.0, 1.5, True, False, [1], {}],
                          ids=repr)
-def test_rejects_statuses_that_are_not_0_1_or_2(world, admin, status):
+def test_rejects_statuses_that_are_not_in_the_status_table(world, admin, status):
     assert put(admin, records=[{"person_id": world.people["Ana"], "status": status}]).status_code == 400
     assert recorded(world.app, TUESDAY) == {}
 
-
+@pytest.mark.parametrize("status", [0, 1, 2, 3])
+def test_every_status_in_the_table_can_be_saved_and_read(world, admin, status):
+    assert put(admin, records=[{"person_id": world.people["Ana"], "status": status}]).status_code == 200
+    assert recorded(world.app, TUESDAY) == {"Ana": status}
+    
 def test_one_bad_record_means_nothing_is_saved(world, admin):
     ana, ben = world.people["Ana"], world.people["Ben"]
     response = put(admin, records=[{"person_id": ana, "status": 1}, {"person_id": ben, "status": 7}])

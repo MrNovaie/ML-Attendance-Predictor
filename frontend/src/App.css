@@ -54,9 +54,10 @@
 }
 
 .badge-in        { background: #d1f7d1; color: #0c5d0c; }
-.badge-partial-day { background: #fff3cd; color: #856404; }
+.badge-am-only { background: #fff3cd; color: #856404; }
+.badge-pm-only { background:rgb(205, 223, 255)d; color: #045e85; }
 .badge-out       { background: #f8d7da; color: #842029; }
-.badge-eval      { background: #c9e0ff; color: #2e0c5d; }
+.badge-eval      { background: #c9e0ff; color: #4c0c5d; }
 .bar-bg   { 
   width: 35%;
   height: 15px;

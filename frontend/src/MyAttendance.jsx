@@ -152,12 +152,14 @@ function MyAttendance({ serverUrl, onSaved }) {
                                             aria-checked={info.status === s.value}
                                             className={`my-option my-option--${s.cls}${info.status === s.value ? ' is-selected' : ''}`}
                                             disabled={!info.can_edit || saving}
+                                            title={s.hint}
                                             onClick={() => choose(s)}
                                         >
                                             {s.label}
                                         </button>
                                     ))}
                                 </div>
+                                <p className="my-hint">AM (In): in this morning, away in the afternoon. PM (In): away in the morning, in this afternoon.</p>
                                 <p className="my-status">
                                     {currentLabel ? `Recorded as ${currentLabel}.` : 'Not recorded yet.'}
                                 </p>

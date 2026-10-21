@@ -6,7 +6,7 @@ drop out of the board, predictions, head-counts and new logins.
 import pytest
 
 from conftest import login, make_record
-
+from users import STATUSES
 from test_preds import MONDAY, history
 
 
@@ -211,7 +211,7 @@ def test_the_head_count_leaves_out_former_people(world, admin):
     make_record(world.app, world.people["Cai"], "2026-10-14", 0)
     remove(admin, world, "Ben")
     result = login(world.app, "alice").get("/api/attendance/summary").get_json()
-    assert result["by_status"] == {"0": 1, "1": 1, "2": 0}
+    assert result["by_status"] == {"0": 1, "1": 1, "2": 0, "3": 0}
     assert (result["not_recorded"], result["total"]) == (0, 2)
     finance = login(world.app, "alice").get("/api/attendance/summary?department=Finance").get_json()
     assert (finance["total"], finance["by_status"]["1"]) == (1, 1)
@@ -340,6 +340,6 @@ def test_a_backup_round_trip_keeps_former_people_and_their_history(world, admin,
     other = make_app("restored")
     import io
     with other.app_context():
-        backup.restore_csv(io.StringIO(text), allowed_statuses={0, 1, 2})
+        backup.restore_csv(io.StringIO(text), allowed_statuses=set(STATUSES))
         flags = {p.name: p.former for p in Person.query}
     assert flags == {"Ana": False, "Ben": True, "Cai": True}

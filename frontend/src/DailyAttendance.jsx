@@ -74,7 +74,7 @@ function PersonChip({ person, status, dirty }) {
     )
 }
 
-// Admin view: drag names between In / Partial Day / Out, or back to Not Recorded, then Save.
+// Admin view: drag names between the status columns (In / AM (In) / PM (In) / Out) or back to Not Recorded, then Save.
 function AdminBoard({ serverUrl, onSaved }) {
     // "Today" as the server sees it (UTC+8), so it does not depend on this browser's timezone.
     const [clock, setClock] = useState(null) // { date, weekend }
@@ -274,7 +274,7 @@ function AdminBoard({ serverUrl, onSaved }) {
                         onDragEnd={handleDragEnd}
                         onDragCancel={() => setActiveId(null)}
                     >
-                        <div className="daily-board">
+                        <div className="daily-board" style={{ gridTemplateColumns: `repeat(${STATUSES.length}, minmax(0, 1fr))` }}>
                             {STATUSES.map((col) => {
                                 const members = visible.filter((p) => draft[p.id] === col.value)
                                 return (
@@ -283,7 +283,7 @@ function AdminBoard({ serverUrl, onSaved }) {
                                         id={`zone-${col.value}`}
                                         className={`daily-column daily-column--${col.cls}`}
                                     >
-                                        <h2 className="daily-column-title">
+                                        <h2 className="daily-column-title" title={col.hint}>
                                             {col.label} <span className="daily-count">{members.length}</span>
                                         </h2>
                                         <div className="daily-chips">

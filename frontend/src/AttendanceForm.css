@@ -75,13 +75,22 @@
     border-color: rgb(220, 53, 69);
     font-weight: 600;
 }
-.attendance-option.option-partial-day:hover {
+.attendance-option.option-am-only:hover {
     background: rgba(255, 255, 0, 0.1);
     transform: scale(1.02);
 }
-.attendance-option.option-partial-day.is-selected {
+.attendance-option.option-am-only.is-selected {
     background-color: rgba(255, 242, 0, 0.15);
     border-color: rgba(248, 219, 33, 0.674);
+    font-weight: 600;
+}
+.attendance-option.option-pm-only:hover {
+    background:  rgba(0, 195, 255, 0.10);
+    transform: scale(1.02);
+}
+.attendance-option.option-pm-only.is-selected {
+    background:  rgba(0, 195, 255, 0.15);
+    border-color: rgba(0, 94, 255, 0.85);
     font-weight: 600;
 }
 .attendance-actions {

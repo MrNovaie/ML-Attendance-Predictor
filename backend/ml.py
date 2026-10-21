@@ -25,7 +25,7 @@ from sklearn.metrics import accuracy_score
 from sqlalchemy import text
 
 from extensions import db
-from users import AttendanceRecord
+from users import AttendanceRecord, STATUSES
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -35,9 +35,8 @@ MODELS_PATH = BASE_DIR / "models.joblib"
 DOW_COL = "Day of Week"
 DOW_NAMES = {"Mon": 1, "Tue": 2, "Wed": 3, "Thu": 4, "Fri": 5}
 
-# Inverse of CategoricalNB class labels. Mirrored by AttendanceRecord.status
-# in users.py — keep them in sync if you change the encoding.
-VERDICT = {0: "Out", 1: "In", 2: "Partial Day"}
+# Inverse of CategoricalNB class labels: the status codes and their names, from users.STATUSES.
+VERDICT = STATUSES
 
 # Columns that are NOT people. Anything else is treated as a person. Must match import_csv.long_format()
 META_COLS = ["Day", "Month", "Day (absolute)", "Day of Week"]

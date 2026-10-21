@@ -1,12 +1,6 @@
 import { useState, useEffect } from 'react'
 import './AttendanceForm.css'
-
-// Codes match the backend: 0 = Out, 1 = In, 2 = Partial Day
-const STATUS_OPTIONS = [
-    { value: 1, label: 'In' },
-    { value: 0, label: 'Out' },
-    { value: 2, label: 'Partial day' },
-]
+import { STATUSES } from './AttendanceUtils'
 
 // toISOString() converts to UTC and can shift the date by a day, so build it from local parts.
 function toLocalISO(d) {
@@ -36,7 +30,7 @@ function AttendanceForm({ serverUrl, peopleVersion = 0 }) {
     const today = toLocalISO(new Date())
     const [date, setDate] = useState(latestWeekday)
     const [people, setPeople] = useState([])
-    const [statuses, setStatuses] = useState({}) // { [personId]: 0 | 1 | 2 }
+    const [statuses, setStatuses] = useState({}) // { [personId]: 0 | 1 | 2 | 3}
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [notice, setNotice] = useState(null) // { type: 'ok' | 'error', text }
@@ -129,7 +123,6 @@ function AttendanceForm({ serverUrl, peopleVersion = 0 }) {
     }
 
     const recordedCount = people.filter((p) => statuses[p.id] !== undefined).length
-
     return (
         <details className="attendance-section">
             <summary>Record attendance</summary>
@@ -150,7 +143,7 @@ function AttendanceForm({ serverUrl, peopleVersion = 0 }) {
                         Attendance can only be recorded for weekdays. Pick a Monday to Friday.
                     </p>
                 )}
-
+                
                 {!weekend && (
                     <>
                         {loading ? (
@@ -165,11 +158,11 @@ function AttendanceForm({ serverUrl, peopleVersion = 0 }) {
                                             role="radiogroup"
                                             aria-label={`Status for ${p.name}`}
                                         >
-                                            {STATUS_OPTIONS.map((o) => (
+                                            {STATUSES.map((o) => (
                                                 <label
                                                     key={o.value}
-                                                    className={`attendance-option option-${o.label.toLowerCase().replace(/\s+/g, '-')}
-                                                    ${statuses[p.id] === o.value ? ' is-selected' : ''}`}
+                                                    className={`attendance-option option-${o.cls}${statuses[p.id] === o.value ? ' is-selected' : ''}`}
+                                                    title={o.hint}
                                                 >
                                                     <input
                                                         type="radio"

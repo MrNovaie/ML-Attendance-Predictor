@@ -1,13 +1,13 @@
 // Shared by the Today's Attendance pages (admin board, user page and the tally).
 
-// Codes match the backend: 0 = Out, 1 = In, 2 = Partial Day.
+// Codes match the users.py backend: 0 = Out, 1 = In, 2 = AM (In) (in the morning, gone for the afternoon), 3 = PM (In).
 // Column order on the admin board, button order on the user page and the order of the tally all
-// follow this list, so splitting Partial Day into AM and PM later starts here (and in
-// ALLOWED_STATUSES in app.py).
+// follow this list. `cls` names the colour classes in the CSS files; `hint` is the tooltip.
 export const STATUSES = [
-    { value: 1, label: 'In', short: 'In', cls: 'in' },
-    { value: 2, label: 'Partial Day', short: 'Partial', cls: 'partial-day' },
-    { value: 0, label: 'Out', short: 'Out', cls: 'out' },
+    { value: 1, label: 'In', short: 'In', cls: 'in', hint: 'In for the whole day' },
+    { value: 2, label: 'AM (In)', short: 'AM', cls: 'am-only', hint: 'In the morning only, away in the afternoon' },
+    { value: 3, label: 'PM (In)', short: 'PM', cls: 'pm-only', hint: 'Away in the morning, in the afternoon only' },
+    { value: 0, label: 'Out', short: 'Out', cls: 'out', hint: 'Out for the whole day' },
 ]
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
