@@ -105,3 +105,5 @@ export function matchesSearch(name, search) {
     const query = search.trim().toLowerCase()
     return !query || name.toLowerCase().includes(query)
 }
+export const slug = (label) =>
+    label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')

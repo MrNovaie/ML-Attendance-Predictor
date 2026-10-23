@@ -10,6 +10,7 @@ import UserManagement from './UserManagement'
 import DailyAttendance from './DailyAttendance'
 import FilterBar from './FilterBar'
 import { matchesSearch } from './AttendanceUtils'
+import { slug } from './AttendanceUtils'
 
 const SERVER_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '')
 
@@ -273,7 +274,7 @@ function App() {
                     <ul className="predictions-list">
                         {shownPredictions.map((prediction) => (
                             <li key={prediction.person} className ="prediction-item">
-                                {prediction.person}: <span className={`badge badge-${prediction.verdict.toLowerCase().replaceAll(' ', '-')}`}> {prediction.verdict} </span> 
+                                {prediction.person}: <span className={`badge badge-${slug(prediction.verdict)}`}> {prediction.verdict} </span> 
                                 <span className="bar-text">Confidence Score</span>
                                 <div className="bar-bg">
                                     <div className="bar-fill" style={{ width: `${prediction.p_winner}%` }} />
@@ -429,7 +430,7 @@ function LoginForm({ onSuccess, onSwitchRegister, signupOpen }) {
                         required
                     />
                 </div>
-                <button type="submit" className="evaluate-btn" disabled={loading}>
+                <button type="submit" className="evaluate-btn login-btn" disabled={loading}>
                     {loading ? 'Logging in…' : 'Login'}
                 </button>
             </form>

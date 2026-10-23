@@ -120,7 +120,7 @@ function AccountsSection({ serverUrl, peopleVersion = 0, onPeopleChanged }) {
     }
 
     return (
-        <details className="accounts-section">
+        <details name="admin-sections" className="accounts-section">
             <summary>
                 Accounts{requests.length > 0 && <span className="accounts-badge" aria-label={`${requests.length} sign-up requests`}>{requests.length}</span>}
             </summary>
@@ -129,8 +129,7 @@ function AccountsSection({ serverUrl, peopleVersion = 0, onPeopleChanged }) {
             <section className="accounts-block">
                 <h3 className="attendance-departments-title">Create logins for people</h3>
                 <p className="attendance-hint">
-                    Ticks the people who have no login yet. Each gets a username made from their name, a random temporary
-                    password, and a link to their own attendance. They must choose their own password at first login.
+                    Creates a login for each ticked person, with a temporary password they must change at first login.
                 </p>
                 {created ? (
                     <div className="accounts-created" role="status">
@@ -209,7 +208,7 @@ function AccountsSection({ serverUrl, peopleVersion = 0, onPeopleChanged }) {
                 <section className="accounts-block">
                     <h3 className="attendance-departments-title">Sign-up requests</h3>
                     <p className="attendance-hint">
-                        A department someone asked for when they signed up. Confirming moves the person linked to that login; link the login first under People.
+                        A department someone asked for when they signed up. Confirming moves the linked person to the requested department. Link the login first under People.
                     </p>
                     <ul className="attendance-list">
                         {requests.map((u) => {

@@ -26,7 +26,7 @@ function BackupSection({ serverUrl }) {
     }
 
     return (
-        <details className="backup-section">
+        <details name="admin-sections" className="backup-section">
             <summary>Backup</summary>
             <section className="attendance-backup">
                 <p className="attendance-hint">

@@ -88,7 +88,15 @@
     margin-top: 1rem;
 }
 
+.log-list-toggle > summary {
+  cursor: pointer;
+  font-weight: 440;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
 /* the list */
+
 .log-list {
     list-style: none;
     padding: 0;
@@ -152,5 +160,9 @@
 
     .log-item time {
         flex-basis: 100%;
+    }
+    .log-section .attendance-hint {
+    font-size: 0.8rem;
+    opacity: 0.75;
     }
 }

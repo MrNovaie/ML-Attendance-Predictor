@@ -166,7 +166,7 @@ function PeopleSection({ serverUrl, onPeopleChanged }) {
     }
 
     return (
-        <details className="people-section">
+        <details name="admin-sections" className="people-section">
             <summary>People</summary>
             <form onSubmit={handleAddPerson} className="attendance-add-person">
                 <label htmlFor="new-person-name">Add a person</label>
@@ -213,7 +213,7 @@ function PeopleSection({ serverUrl, onPeopleChanged }) {
             <section className="attendance-departments">
                 <h3 className="attendance-departments-title">Departments and logins</h3>
                 <p className="attendance-hint">
-                    Link a login to a person so that user can set their own attendance each morning, until the daily cutoff.
+                    Link a login to a person so they can set their own attendance until the daily cutoff.
                 </p>
                 {people.length === 0 ? (
                     <p>No one to assign yet.</p>

@@ -95,7 +95,7 @@ function AdminBoard({ serverUrl, onSaved }) {
     // the page by swiping over a chip still works.
     const sensors = useSensors(
         useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-        useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+        useSensor(TouchSensor, { activationConstraint: { delay: 130, tolerance: 8 } }),
         useSensor(KeyboardSensor),
     )
 

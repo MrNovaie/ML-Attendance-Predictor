@@ -24,7 +24,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.6rem 0;
+    padding: 0.8rem 0;
     border-bottom: 1px solid rgba(128, 128, 128, 0.3);
 }
 
@@ -67,7 +67,7 @@
 }
 /* User Management Reset */
 .user-admin-row {
-    flex-wrap: wrap; /* lets the reset form open on its own line under the row */
+    flex-wrap: nowrap;
 }
 
 .user-admin-actions {
@@ -111,4 +111,13 @@
     margin: 0 0 0.5rem;
     font-size: 0.9rem;
     opacity: 0.75;
+}
+@media (max-width: 480px) {
+    .user-admin-section .evaluate-btn {
+        min-height: 36px;
+        min-width: 0;
+        padding: 0.3rem 0.75rem;
+        font-size: 0.875rem;
+        border-radius: 8px;
+    }
 }

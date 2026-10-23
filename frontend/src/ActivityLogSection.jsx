@@ -121,11 +121,11 @@ function ActivityLogSection({ serverUrl }) {
     }
 
     return (
-        <details className="log-section" onToggle={(event) => setOpened(event.currentTarget.open)}>
+        <details name="admin-sections" className="log-section" onToggle={(event) => setOpened(event.currentTarget.open)}>
             <summary>Activity log</summary>
             <section className="log-body">
                 <p className="attendance-hint">
-                    Every change an admin makes, newest first. Nothing here can be edited or deleted.
+                    Every admin change, newest first. Entries can't be edited or deleted.
                 </p>
 
                 <ChainStatus chain={chain} checking={checking} onCheck={() => setCheckAgain((n) => n + 1)} />
@@ -183,7 +183,7 @@ function ActivityLogSection({ serverUrl }) {
                         {downloading ? 'Preparing…' : 'Download CSV'}
                     </button>
                 </div>
-                <p className="attendance-hint">The CSV holds everything that matches the filters above, not just this page.</p>
+                <p className="attendance-hint">The CSV file will contain every log matching the filters above.</p>
 
                 {notice && (
                     <p className={`attendance-notice attendance-notice--${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>
@@ -200,39 +200,41 @@ function ActivityLogSection({ serverUrl }) {
                 {!loading && !page.error && groups.length === 0 && (
                     <p className="attendance-hint">No entries match.</p>
                 )}
-
-                <ul className="log-list">
-                    {groups.map((group) =>
-                        group.summary ? (
-                            <li key={group.key} className="log-item">
-                                <details>
-                                    <summary>
-                                        <time dateTime={group.rows[0].logged_at} title={group.rows[0].logged_at}>
-                                            {formatLogTime(group.rows[0].logged_at)}
-                                        </time>
-                                        <span className="log-text">{group.summary}</span>
-                                    </summary>
-                                    <ul className="log-sublist">
-                                        {group.rows.map((row) => (
-                                            <li key={row.seq}>
-                                                <span className="log-seq">#{row.seq}</span> {row.text}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </details>
-                            </li>
-                        ) : (
-                            <li key={group.key} className="log-item">
-                                <time dateTime={group.rows[0].logged_at} title={group.rows[0].logged_at}>
-                                    {formatLogTime(group.rows[0].logged_at)}
-                                </time>
-                                <span className="log-text">
-                                    {group.rows[0].text} <span className="log-seq">#{group.rows[0].seq}</span>
-                                </span>
-                            </li>
-                        ),
-                    )}
-                </ul>
+                <details className="log-list-toggle" open>
+                    <summary>Entries ({groups.length})</summary>
+                    <ul className="log-list">
+                        {groups.map((group) =>
+                            group.summary ? (
+                                <li key={group.key} className="log-item">
+                                    <details>
+                                        <summary>
+                                            <time dateTime={group.rows[0].logged_at} title={group.rows[0].logged_at}>
+                                                {formatLogTime(group.rows[0].logged_at)}
+                                            </time>
+                                            <span className="log-text">{group.summary}</span>
+                                        </summary>
+                                        <ul className="log-sublist">
+                                            {group.rows.map((row) => (
+                                                <li key={row.seq}>
+                                                    <span className="log-seq">#{row.seq}</span> {row.text}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </details>
+                                </li>
+                            ) : (
+                                <li key={group.key} className="log-item">
+                                    <time dateTime={group.rows[0].logged_at} title={group.rows[0].logged_at}>
+                                        {formatLogTime(group.rows[0].logged_at)}
+                                    </time>
+                                    <span className="log-text">
+                                        {group.rows[0].text} <span className="log-seq">#{group.rows[0].seq}</span>
+                                    </span>
+                                </li>
+                            ),
+                        )}
+                    </ul>
+                </details>
 
                 {!loading && page.more && (
                     <button type="button" className="evaluate-btn" onClick={loadOlder} disabled={loadingMore} aria-busy={loadingMore}>

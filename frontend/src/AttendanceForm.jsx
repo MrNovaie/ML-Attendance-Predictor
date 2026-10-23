@@ -124,7 +124,7 @@ function AttendanceForm({ serverUrl, peopleVersion = 0 }) {
 
     const recordedCount = people.filter((p) => statuses[p.id] !== undefined).length
     return (
-        <details className="attendance-section">
+        <details name="admin-sections" className="attendance-section">
             <summary>Record attendance</summary>
             <form onSubmit={handleSave}>
                 <div className="attendance-date">
