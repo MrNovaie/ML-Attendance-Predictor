@@ -360,7 +360,7 @@ The suite was also checked by breaking the code on purpose (21 bugs in attendanc
 
 **CI** (`.github/workflows/ci.yml`) runs `pytest` (Python 3.13) and `npm ci` + `npm run build` (Node 22) on every push and pull request.
 
-The frontend has no tests yet (the helpers in `ActivityLogUtils.js` are pure and easy to test); `npm run build` checks that it compiles. `npm run lint` still reports 4 older errors (React's set-state-in-effect rule in `App.jsx`, `AttendanceForm.jsx`, `UserManagement.jsx`), so CI does not run it.
+The frontend has no tests yet (the helpers in `ActivityLogUtils.js` are pure and easy to test); `npm run build` checks that it compiles.
 
 ## Manual smoke test
 
